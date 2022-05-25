@@ -2,7 +2,7 @@
 // Phil Karn, KA9Q
 // Apr 2018
 // New unified SHA1/SHA256 version May 2020
-// $Id: checkattr.c,v 1.34 2021/11/22 02:43:27 karn Exp $
+// $Id: checkattr.c,v 1.35 2022/04/25 07:55:15 karn Exp karn $
 
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
@@ -29,6 +29,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <sys/xattr.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <limits.h>
@@ -38,15 +39,6 @@
 #include <signal.h>
 #include <time.h>
 #include <utime.h>
-
-#if __APPLE__
-#include <sys/xattr.h>
-#include <sys/time.h>
-#else
-#include <attr/xattr.h>
-#include <endian.h>
-#endif
-
 
 #include "filehash.h"
 
@@ -77,10 +69,6 @@ int Nopenfd = 100;
 int Zero_flag; // Interpret '\0' as delimiter on file names read from stdin
 int Check_tags; // Verify correctness of all existing, up-to-date tags
 int Quiet; // Be very quiet except for fatal errors
-int Fix;   // Correct hash mismatches (use with care!)
-struct timeval Last_status;
-double Status_interval = 1;
-FILE *File_list;
 
 // Statistics counters
 // Counts of file types seen
@@ -115,7 +103,7 @@ unsigned long long Files_checked; // Files actually scanned in first pass
 uid_t User_id;
 gid_t Group_id;
 
-char *Program_name; // Points to argv[0], for benefit of subroutines generating error messages
+char const *Program_name; // Points to argv[0], for benefit of subroutines generating error messages
 
 void sig_handler(int);
 void alarm_handler(int sig);
@@ -124,14 +112,13 @@ int verify_reg_file(const char *,const struct stat *);
 void print_stats(void);
 
 // Our function that will handle each file in the hierarchy
-int process_file(const char *pathname,const struct stat *statbuf,int typeflag,struct FTW *ftwbuf);
+int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf);
 
 int Verbose;
 int Quiet;
 
-
 int main(int argc,char *argv[]){
-  char *locale_string = "en_US.UTF-8";
+  char const *locale_string = "en_US.UTF-8";
 
   Program_name = argv[0];
   User_id = geteuid();
@@ -146,16 +133,13 @@ int main(int argc,char *argv[]){
 
   /* Process command line args */
   int c;
-  while((c = getopt(argc,argv,"vcL:0qxn:f")) != EOF){
+  while((c = getopt(argc,argv,"vcL:0qx")) != EOF){
     switch(c){
     case 'q':
       Quiet++;
       break;
-    case 'n':
-      Status_interval = strtod(optarg,NULL);
-      break;
     case 'x':
-      nftw_flags |= FTW_MOUNT;
+      nftw_flags |= FTW_MOUNT; // Don't cross mount points
       break;
     case 'v':
       Verbose++;
@@ -170,7 +154,7 @@ int main(int argc,char *argv[]){
       Zero_flag++; /* Path names are delimited by nulls, e.g., from 'find . -print0' */
       break;
     default:
-      printf("Usage: %s [-v] [-0] [-f] [-q] [-c] [-x] [-L locale]",Program_name);
+      printf("Usage: %s [-v] [-0] [-q] [-c] [-x] [-L locale]",Program_name);
       break;
     }
   }
@@ -266,8 +250,8 @@ int main(int argc,char *argv[]){
       } else if((statbuf.st_mode & S_IFMT) == S_IFREG){
 	process_file(argv[i],&statbuf,FTW_F,NULL);
       } else if((statbuf.st_mode & S_IFDIR) == S_IFDIR){
-	int r;
-	if((r = nftw(argv[i],process_file,Nopenfd,nftw_flags)) != 0)
+	int const r = nftw(argv[i],process_file,Nopenfd,nftw_flags);
+	if(r != 0)
 	  printf("ntfw(%s) returns %d\n",argv[i],r);
       } else
 	printf("%s is not symlink, directory or regular file\n",argv[i]);
@@ -278,11 +262,11 @@ int main(int argc,char *argv[]){
     if(Verbose)
       printf("Reading file names from standard input...\n");
     while(!feof(stdin)){
-      int ch,ll;
+      int ll;
       char pathname[PATH_MAX];
       
       for(ll=0; ll<PATH_MAX; ll++){
-	ch = getc(stdin);
+	char ch = getc(stdin);
 	// Translate EOF or newline to terminal null
 	if(ch == EOF || (!Zero_flag && '\n' == ch))
 	  ch = '\0';
@@ -294,15 +278,14 @@ int main(int argc,char *argv[]){
       if(ll == PATH_MAX){
 	// Input line was too long; flush until terminating null/newline/EOF
 	printf("Input line > PATH_MAX (%d); flushing\n",PATH_MAX);
+	char ch;
 	do {
 	  ch = getc(stdin);
 	  // Translate EOF or newline to terminating null
 	} while(ch != '\0' && ch != EOF && (!Zero_flag && '\n' != ch));
       } else if(ll > 0){	    // Ignore empty lines
 	struct stat statbuf;
-	int typeflag;
-	
-	typeflag = FTW_NS;
+	int typeflag = FTW_NS;
 	if(lstat(pathname,&statbuf) == 0){
 	  switch(statbuf.st_mode & S_IFMT){
 	  case S_IFREG:
@@ -330,7 +313,7 @@ int main(int argc,char *argv[]){
 // Process a path name
 // Return codes:
 //  0: normal
-int process_file(const char *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf){
+int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf){
   Total_files++;
   int retval = FTW_CONTINUE;
 
