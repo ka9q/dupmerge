@@ -1,0 +1,36 @@
+CC=gcc
+CFLAGS=-g -O2 -Wall -I/opt/local/include
+
+# file_monitor not supported on MacOS - uses Linux specific fanotify(7) facility
+#APPS= dupmerge checkattr pathnames mergefiles construct rmdups
+APPS= checkattr dupmerge
+
+all:  $(APPS)
+
+rmdups: rmdups.o
+	$(CC) $(CFLAGS) -o rmdups rmdups.o
+
+construct: construct.o library.o
+	$(CC) $(CFLAGS) -o construct construct.o library.o -l crypto
+
+mergefiles: mergefiles.o
+	$(CC) $(CFLAGS) -o mergefiles mergefiles.o
+
+checkattr: checkattr.o library.o
+	$(CC) $(CFLAGS) -o checkattr checkattr.o library.o -l ncurses -l crypto
+
+dupmerge: dupmerge.o library.o
+	$(CC) $(CFLAGS) -o dupmerge dupmerge.o library.o -l crypto
+
+checkattr.o: checkattr.c filehash.h
+
+library.o: library.c filehash.h
+
+install: $(APPS)
+	install -b -m 0755 -S -v $^ /usr/local/bin
+
+clean:
+	rm -f *.o *.a $(APPS)
+
+.c.o:
+	$(CC) $(CFLAGS) -c -o $@ $< 
