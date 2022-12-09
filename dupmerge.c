@@ -1,4 +1,4 @@
-// $Id: dupmerge.c,v 1.5 2021/09/28 05:59:54 karn Exp $
+// $Id: dupmerge.c,v 1.7 2022/12/09 02:38:11 karn Exp $
 /* Dupmerge - Reclaim disk space by deleting redundant copies of files and
  * creating hardlinks in their place
 
@@ -164,7 +164,7 @@ unsigned long long Unlink_failures;
 size_t pagesize;
 size_t mapchunk;
 
-char *Program_name; // Points to argv[0], for benefit of subroutines generating error messages
+char const *Program_name; // Points to argv[0], for benefit of subroutines generating error messages
 
 #define ENTRYCHUNK 5000 // Allocation unit for file table
 #define MAP_PAGES 32768 // Number of pages to mmap on each loop
@@ -187,29 +187,25 @@ void print_stats(void);
 void sig_handler(int);
 
 // Comparison functions
-int comparison_equal(const void *ap,const void *bp); // Does most of the work
-int comparison_sort(const void *ap,const void *bp); // Version called by qsort()
-int compare_inodes(const void *ap,const void *bp); // Version called by qsort()
-int compare_extents(const void *ap,const void *bp);
+int comparison_equal(void const *ap,void const *bp); // Does most of the work
+int comparison_sort(void const *ap,void const *bp); // Version called by qsort()
+int compare_inodes(void const *ap,void const *bp); // Version called by qsort()
+int compare_extents(void const *ap,void const *bp);
 
 struct entry *Entries; // Dynamically allocated file table
 unsigned int Entryarraysize; // Start with empty table, allocate on first pass
 unsigned int Nfiles; // Actual number of entries in Entries[]
 
 void dump_files(void);
-void dump_entry(struct entry *);
+void dump_entry(struct entry const *);
 int get_big_hash(struct entry *ep,struct stat const *);
 // Our function that will handle each file in the hierarchy
-int process(const char *pathname,const struct stat *statbuf,int typeflag,struct FTW *ftwbuf);
-
+int process(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf);
 
 int main(int argc,char *argv[]){
-  int i,j;
-  char *locale_string = "en_US.UTF-8";
-  int c;
+  char const *locale_string = "en_US.UTF-8";
 
   Program_name = argv[0];
-
   assert(sha256_selftest() == 0);
 
   // Determine system page size and amount to map each time
@@ -218,6 +214,7 @@ int main(int argc,char *argv[]){
   mapchunk = MAP_PAGES * pagesize; // Amount to hash at one time in full file hash
 
   // Process command line args
+  int c;
   while((c = getopt(argc,argv,"snqf0t:L:vm:")) != EOF){
     switch(c){
     case 'm':
@@ -279,19 +276,18 @@ int main(int argc,char *argv[]){
 
   // Process directories given as command-line arguments
   if(optind < argc){
-    int i;
-
-    for(i=optind;i<argc;i++)
+    for(int i=optind;i<argc;i++)
       nftw(argv[i],process,Nopenfd,FTW_PHYS);
 
   } else {
     // If no directories on command line, read list of files from stdin
     while(!feof(stdin)){
-      int ch,i;
       char pathname[PATH_MAX+1];
 
+      int i;
       for(i=0;i< PATH_MAX;i++){
-	if(EOF == (ch = getc(stdin)) || '\0' == ch || (!Zero_flag && '\n' == ch))
+	char const ch = getc(stdin);
+	if(EOF == ch || '\0' == ch || (!Zero_flag && '\n' == ch))
 	  break;
 	pathname[i] = ch;
       }
@@ -361,21 +357,25 @@ int main(int argc,char *argv[]){
   // same size follow, we must leave them all because it's possible we'll have to merge all those
   // path names to the first one. This still takes care of the common case where all the entries
   // of a given size refer to a single file
-  for(i=0;i<Nfiles;i = j){
-    for(j=i+1; j<Nfiles &&
-	  Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
-	  Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev &&
-	  Entries[i].statbuf.st_ino == Entries[j].statbuf.st_ino; j++){
-      // Already hard linked, remove from list
-      free(Entries[j].pathname);
-      Entries[j].pathname = NULL;
-      Extra_links++;
+  {
+    int j = 0;
+    for(int i=0;i<Nfiles;i = j){
+      
+      for(j=i+1; j<Nfiles &&
+	    Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
+	    Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev &&
+	    Entries[i].statbuf.st_ino == Entries[j].statbuf.st_ino; j++){
+	// Already hard linked, remove from list
+	free(Entries[j].pathname);
+	Entries[j].pathname = NULL;
+	Extra_links++;
+      }
+      // Skip any more files with the same size on the same device
+      for(;j<Nfiles && Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
+	    Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev;j++)
+	; // empty loop body
+      
     }
-    // Skip any more files with the same size on the same device
-    for(;j<Nfiles && Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
-	  Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev;j++)
-      ; // empty loop body
-
   }
   if(Extra_links != 0){
     if(Verbose)
@@ -392,21 +392,23 @@ int main(int argc,char *argv[]){
     }
   }
   // Walk through file list culling out unique sizes
-  for(i=0;i<Nfiles;i = j){
-    // Find first file after this one with a different size or device
-    for(j=i+1; j<Nfiles &&
-	  Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
-	  Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev; j++){
-      // empty body
-    }
-    if(j == i+1){
-      // Unique size on this device, remove from list
-      free(Entries[i].pathname);
-      Entries[i].pathname = NULL;
-      Unique_sizes++;
+  {
+    int j = 0;
+    for(int i=0;i<Nfiles;i = j){
+      // Find first file after this one with a different size or device
+      for(j=i+1; j<Nfiles &&
+	    Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
+	    Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev; j++){
+	// empty body
+      }
+      if(j == i+1){
+	// Unique size on this device, remove from list
+	free(Entries[i].pathname);
+	Entries[i].pathname = NULL;
+	Unique_sizes++;
+      }
     }
   }
-
   if(Unique_sizes != 0){
     if(Verbose)
       printf("%s: %'llu files with unique sizes removed from list\n",Program_name,Unique_sizes);
@@ -423,7 +425,7 @@ int main(int argc,char *argv[]){
   }    
   // Walk through first of each group of files that are candidates for being the same
   // This is the reference file
-  for(i=0;i<Nfiles-1;i++){
+  for(int i=0;i<Nfiles-1;i++){
     
     Progress = i;
 
@@ -433,7 +435,7 @@ int main(int argc,char *argv[]){
 
     // The qsort grouped together all files with the same size on the same device
     // Scan forward for all files with the same size and device as the reference file
-    for(j=i+1;
+    for(int j=i+1;
 	j<Nfiles
 	  && Entries[i].statbuf.st_size == Entries[j].statbuf.st_size
 	  && Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev;
@@ -519,7 +521,7 @@ int main(int argc,char *argv[]){
 // if it's an ordinary, readable, non-empty file, add it to the list
 // if it's a directory, process it recursively
 // Otherwise, ignore it
-int process(const char *pathname,const struct stat *statbuf,int typeflag,struct FTW *ftwbuf){
+int process(char const *pathname,const struct stat *statbuf,int typeflag,struct FTW *ftwbuf){
   struct entry *ep;
   assert(statbuf != NULL);
 
@@ -602,8 +604,6 @@ int process(const char *pathname,const struct stat *statbuf,int typeflag,struct 
     Too_small++;
     return 0;
   }
-
-
   // Ordinary file; add to file table
   // Expand file table if necessary and possible
   if(Nfiles >= Entryarraysize){
@@ -612,6 +612,7 @@ int process(const char *pathname,const struct stat *statbuf,int typeflag,struct 
     Entryarraysize += ENTRYCHUNK;
   }
   ep = &Entries[Nfiles];
+  memset(ep,0,sizeof(*ep));
   ep->statbuf = *statbuf;
   ep->pathname = strdup(pathname);
 
@@ -630,11 +631,9 @@ int process(const char *pathname,const struct stat *statbuf,int typeflag,struct 
 
 // We want the largest files to go to the top of the list, so "smaller is greater".
 // We also want empty entries to go to the end of the list, so they are always "greater" 
-int comparison_sort(const void *ap,const void *bp){
-  struct entry *a,*b;
-
-  a = (struct entry *)ap;
-  b = (struct entry *)bp;
+int comparison_sort(void const *ap,void const *bp){
+  struct entry const *a = (struct entry *)ap;
+  struct entry const *b = (struct entry *)bp;
 
   // These aren't really illegal, but qsort should never pass null entries, or try to compare an entry with itself
   assert(a != NULL);
@@ -682,12 +681,10 @@ int comparison_sort(const void *ap,const void *bp){
 
 
 
+// Note: these *do* modify their arguments by writing hashes if they don't already exist
 int comparison_equal(const void *ap,const void *bp){
-  struct entry *a,*b;
-  int i;
-
-  a = (struct entry *)ap;
-  b = (struct entry *)bp;
+  struct entry *a = (struct entry *)ap;
+  struct entry *b = (struct entry *)bp;
 
   if(a == b)
     return 0; /* Can this happen? */
@@ -731,7 +728,7 @@ int comparison_equal(const void *ap,const void *bp){
   get_big_hash(a,&a->statbuf);
   get_big_hash(b,&b->statbuf);
   
-  i = memcmp(a->attr256.hash,b->attr256.hash,sizeof(a->attr256.hash));
+  int const i = memcmp(a->attr256.hash,b->attr256.hash,sizeof(a->attr256.hash));
   if(i != 0)
     Hash_fail++;
 
@@ -739,10 +736,8 @@ int comparison_equal(const void *ap,const void *bp){
 }
 
 int compare_inodes(const void *ap,const void *bp){
-  struct entry *a,*b;
-
-  a = (struct entry *)ap;
-  b = (struct entry *)bp;
+  struct entry const *a = (struct entry *)ap;
+  struct entry const *b = (struct entry *)bp;
 
   if(a == NULL && b == NULL)
     return 0;
@@ -779,7 +774,7 @@ int get_big_hash(struct entry *ep,struct stat const *statbuf){
   if(ep->attr_present)
     return 0;
   int rval = 0;
-  int fd = open(ep->pathname,O_RDONLY);
+  int const fd = open(ep->pathname,O_RDONLY);
   if(fd == -1){
     rval = -1;
     if(Verbose)
@@ -787,7 +782,7 @@ int get_big_hash(struct entry *ep,struct stat const *statbuf){
     goto done;
   }
   // Ensure tag is present and up to date
-  long long r = update_tag_fd(fd,statbuf);
+  long long const r = update_tag_fd(fd,statbuf);
   if(r < 0){
     rval = -1;
     if(Verbose)
@@ -811,7 +806,7 @@ int get_big_hash(struct entry *ep,struct stat const *statbuf){
     close(fd);
   return rval;
 }
-void dump_entry(struct entry *ep){
+void dump_entry(struct entry const * const ep){
 
 #if (__darwin__)
   printf(" inode %'llu; links %u; uid %d; gid %d; atime %ld.%09ld; mtime %ld.%09ld; ctime %ld.%09ld; size %'llu; gen %d; %s\n",
@@ -843,9 +838,7 @@ void dump_entry(struct entry *ep){
 
 
 void dump_files(void){
-  int i;
-
-  for(i=0;i<Nfiles;i++)
+  for(int i=0;i<Nfiles;i++)
     dump_entry(&Entries[i]);
 }
 
