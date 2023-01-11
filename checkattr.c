@@ -423,7 +423,7 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
     } else {
       long long const r = update_tag_fd(fd,statbuf);
       if(Verbose && r > 0)
-	printf("Updating %s\n",pathname);
+	printf("Updated %s\n",pathname);
       if(r == -1){
 	  printf("%s: update_tag_fd error; %s\n",pathname,strerror(errno));
       } else if(r > 0){
