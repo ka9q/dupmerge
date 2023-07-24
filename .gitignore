@@ -5,3 +5,4 @@ checkattr
 dupmerge
 file_monitor
 mergefiles
+RCS/*
