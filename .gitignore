@@ -1,0 +1,6 @@
+*.o
+*.a
+checkattr
+dupmerge
+file_monitor
+mergefiles
