@@ -1,4 +1,4 @@
-// $Id: library.c,v 1.16 2021/09/28 06:02:00 karn Exp $
+// $Id: library.c,v 1.16 2021/09/28 06:02:00 karn Exp karn $
 // User-callable library for hash-based indexing
 // Phil Karn, KA9Q
 // Dec 2012
@@ -41,10 +41,10 @@
 
 // Implicitly little endian, should add macros for portability to big-endian systems
 
-int getattr256(int fd,struct attr256 *attr){
+int getattr256(int const fd,struct attr256 * const attr){
   unsigned char attrbuf[1024];
 
-  int length = FGETXATTR(fd,ATTR_NAME_256,&attrbuf,sizeof(attrbuf));
+  int const length = FGETXATTR(fd,ATTR_NAME_256,&attrbuf,sizeof(attrbuf));
   if(length == sizeof(int32_t) + SHA256_DIGEST_LENGTH){
     // Old version with 32-bit time_t and no nanoseconds
     attr->mtime.tv_sec = * (int32_t *)&attrbuf[0];
@@ -77,10 +77,10 @@ int getattr256(int fd,struct attr256 *attr){
 // int64_t mtime.tv_sec, int32_t mtime.tv_nsec, hash[20]
 // int64_t mtime_tv.sec, int64_t mtime.tv_nsec, hash[20]
 
-int getattr1(int fd,struct attr1 *attr){
+int getattr1(int const fd,struct attr1 * const attr){
   unsigned char attrbuf[1024];
 
-  int length = FGETXATTR(fd,ATTR_NAME_1,&attrbuf,sizeof(attrbuf));
+  int const length = FGETXATTR(fd,ATTR_NAME_1,&attrbuf,sizeof(attrbuf));
   if(length == sizeof(int32_t) + SHA_DIGEST_LENGTH){
     // Old version with 32-bit time_t and no nanoseconds
     attr->mtime.tv_sec = * (int32_t *)&attrbuf[0];
@@ -110,12 +110,12 @@ int getattr1(int fd,struct attr1 *attr){
 }
 // Temporarily enable write permissions so we can set an attribute
 // May fail if we're not root or don't own the file
-static int temp_enable(int fd,struct stat const *statbuf){
+static int temp_enable(int const fd,struct stat const * const statbuf){
   // Simulate access() call to see if we'll have to temporarily enable write perms
   // This is hairy logic, I know
   int saved_mode = -1;
-  int user_id = geteuid();
-  int group_id = getegid();
+  int const user_id = geteuid();
+  int const group_id = getegid();
   if(user_id != 0 && (
 		      (user_id == statbuf->st_uid && !(statbuf->st_mode & S_IWUSR))
 		      || (group_id == statbuf->st_gid && !(statbuf->st_mode & S_IWGRP))
@@ -130,7 +130,7 @@ static int temp_enable(int fd,struct stat const *statbuf){
 
 }
 // Set sha1 attribute
-static int set_tag_1(int fd,const struct stat *statbuf,struct attr1 *attr){
+static int set_tag_1(int const fd,const struct stat *statbuf,struct attr1 const * const attr){
   assert(fd != -1);
 
   struct stat sb;
@@ -139,15 +139,14 @@ static int set_tag_1(int fd,const struct stat *statbuf,struct attr1 *attr){
       return -1;
     statbuf = &sb;
   }
-  int saved_mode = temp_enable(fd,statbuf);
+  int const saved_mode = temp_enable(fd,statbuf);
   char attrbuf[32];
   * (int64_t *)&attrbuf[0] = attr->mtime.tv_sec;
   * (int32_t *)&attrbuf[8] = (int32_t)attr->mtime.tv_nsec;
   memcpy(&attrbuf[12],attr->hash,SHA_DIGEST_LENGTH);
 
-  int rval = FSETXATTR(fd,ATTR_NAME_1,attrbuf,sizeof(attrbuf),0);
-
-  int errno_save = errno;  // Return errno (if any) of setxattr to caller
+  int const rval = FSETXATTR(fd,ATTR_NAME_1,attrbuf,sizeof(attrbuf),0);
+  int const errno_save = errno;  // Return errno (if any) of setxattr to caller
   if(saved_mode != -1)
     fchmod(fd,saved_mode);        // Restore mode
 
@@ -155,7 +154,7 @@ static int set_tag_1(int fd,const struct stat *statbuf,struct attr1 *attr){
   return rval;
 }
 // Set sha256 attribute
-static int set_tag_256(int fd,const struct stat *statbuf,struct attr256 *attr){
+static int set_tag_256(int const fd,const struct stat *statbuf,struct attr256 const * const attr){
   assert(fd != -1);
 
   struct stat sb;
@@ -164,15 +163,15 @@ static int set_tag_256(int fd,const struct stat *statbuf,struct attr256 *attr){
       return -1;
     statbuf = &sb;
   }
-  int saved_mode = temp_enable(fd,statbuf);
+  int const saved_mode = temp_enable(fd,statbuf);
   char attrbuf[44];
   * (int64_t *)&attrbuf[0] = attr->mtime.tv_sec;
   * (int32_t *)&attrbuf[8] = (int32_t)attr->mtime.tv_nsec;
   memcpy(&attrbuf[12],attr->hash,SHA256_DIGEST_LENGTH);
 
-  int rval = FSETXATTR(fd,ATTR_NAME_256,attrbuf,sizeof(attrbuf),0);
+  int const rval = FSETXATTR(fd,ATTR_NAME_256,attrbuf,sizeof(attrbuf),0);
 
-  int errno_save = errno;  // Return errno (if any) of setxattr to caller
+  int const errno_save = errno;  // Return errno (if any) of setxattr to caller
   if(saved_mode != -1)
     fchmod(fd,saved_mode);        // Restore mode
 
@@ -198,13 +197,13 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
   printf("update_tag_fd(%d) inode %lld size %lld",fd,(long long int)statbuf->st_ino,(long long int)statbuf->st_size);
 #endif
   struct attr1 attr1;
-  int r = getattr1(fd,&attr1);
+  int const r1 = getattr1(fd,&attr1);
   int attr1_state = MISSING;
   
-  if(r == -1 && errno == ENOTSUP){
+  if(r1 == -1 && errno == ENOTSUP){
     // File system doesn't support xattrs
     return -1;
-  } else if(r == 0){
+  } else if(r1 == 0){
     if(time_cmp(&attr1.mtime,&statbuf->st_mtim) == 0){
       attr1_state = CURRENT;
     } else
@@ -214,9 +213,9 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
   // Check status of SHA256 tag
   struct attr256 attr256;
   int attr256_state = MISSING;
-  r = getattr256(fd,&attr256);
-  assert(!(r == -1 && errno == ENOTSUP));  // Should be already caught by read of sha1 xattr
-  if(r == 0){
+  int const r256 = getattr256(fd,&attr256);
+  assert(!(r256 == -1 && errno == ENOTSUP));  // Should be already caught by read of sha1 xattr
+  if(r256 == 0){
     if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
       attr256_state = CURRENT;
     } else
@@ -230,7 +229,7 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
 
   if(attr256_state != CURRENT || attr1_state != CURRENT){
     // Do hashes together so we make only one file pass
-    long long count = hash_file(fd,statbuf,
+    long long const count = hash_file(fd,statbuf,
 		      (attr1_state != CURRENT) ? attr1.hash : NULL,
 		      (attr256_state != CURRENT) ? attr256.hash : NULL);
 #if 0
@@ -261,7 +260,7 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
 }
 
 // verify tags, if up to date
-int verify_tag_fd(int fd,struct stat const *statbuf){
+int verify_tag_fd(int const fd,struct stat const *statbuf){
   assert(fd != -1);
 
   struct stat sb;
@@ -270,7 +269,6 @@ int verify_tag_fd(int fd,struct stat const *statbuf){
       return -1;
     statbuf = &sb;
   }
-
   if((statbuf->st_mode & S_IFMT) != S_IFREG)
     return -1; // Not regular file
   if(statbuf->st_nlink < 1)
@@ -281,11 +279,11 @@ int verify_tag_fd(int fd,struct stat const *statbuf){
 #endif
   struct attr1 attr1;
   int attr1_state = MISSING;
-  int r = getattr1(fd,&attr1);
-  if(r == -1 && errno == ENOTSUP){
+  int const r1 = getattr1(fd,&attr1);
+  if(r1 == -1 && errno == ENOTSUP){
     // File system doesn't support xattrs
     return -1;
-  } else if(r == 0){
+  } else if(r1 == 0){
     if(time_cmp(&attr1.mtime,&statbuf->st_mtim) == 0){
       attr1_state = CURRENT;
     } else
@@ -295,9 +293,9 @@ int verify_tag_fd(int fd,struct stat const *statbuf){
   // Check status of SHA256 tag
   struct attr256 attr256;
   int attr256_state = MISSING;
-  r = getattr256(fd,&attr256);
-  assert(!(r == -1 && errno == ENOTSUP));  // Should be already caught by read of sha1 xattr
-  if(r == 0){
+  int const r256 = getattr256(fd,&attr256);
+  assert(!(r256 == -1 && errno == ENOTSUP));  // Should be already caught by read of sha1 xattr
+  if(r256 == 0){
     if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
       attr256_state = CURRENT;
     } else
@@ -317,7 +315,7 @@ int verify_tag_fd(int fd,struct stat const *statbuf){
   struct attr1 new_attr1;
   struct attr256 new_attr256;
 
-  long long count = hash_file(fd,statbuf,
+  long long const count = hash_file(fd,statbuf,
 			      (attr1_state == CURRENT) ? new_attr1.hash : NULL,
 			      (attr256_state == CURRENT) ? new_attr256.hash : NULL);
 #if 0
@@ -340,7 +338,7 @@ int verify_tag_fd(int fd,struct stat const *statbuf){
 // Compute SHA1 and/or SHA256 hashes of entire file already open with file descriptor fd
 // Computing both hashes in one pass of the file is much more efficient
 // If this turns out to be CPU bound on slower machines, consider doing it in two threads
-long long hash_file(int fd,struct stat const *statbuf,unsigned char *sha1hash,unsigned char *sha256hash){
+long long hash_file(int const fd,struct stat const *statbuf,unsigned char * const sha1hash,unsigned char * const sha256hash){
   assert(fd != -1);
 
   struct stat sb;
@@ -353,39 +351,43 @@ long long hash_file(int fd,struct stat const *statbuf,unsigned char *sha1hash,un
   if(sha1hash == NULL && sha256hash == NULL)
     return 0; // Nothing to do!
   
-  off_t remain,file_offset;
+
   SHA_CTX sha1_context;
   SHA256_CTX sha256_context;
-  void *p;
-  size_t chunksize;
-  int r;
-  long long count = 0;
 
-  remain = statbuf->st_size;
-  chunksize = 64 * sysconf(_SC_PAGESIZE);
-  assert(chunksize != 0); // Make sure page size doesn't return 0
 
   if(sha1hash != NULL)
     SHA1_Init(&sha1_context);
   if(sha256hash != NULL)
     SHA256_Init(&sha256_context);
-  for(file_offset = 0;
+  
+  off_t remain = statbuf->st_size;
+  //  size_t chunksize = 512 * sysconf(_SC_PAGESIZE); // Matches a 2MB huge page on x86, might help
+  size_t chunksize = 1<<30;
+  assert(chunksize != 0); // Make sure page size doesn't return 0
+  long long count = 0;
+
+  for(off_t file_offset = 0;
       remain != 0;
       remain -= chunksize,file_offset += chunksize){
       
     chunksize = chunksize > remain ? remain : chunksize;
-    // Map more in an experiment to see if it improves readahead
-    int mlength = (2 * chunksize) > remain ? remain : (2* chunksize);
-
-    if((p = mmap(NULL, mlength, PROT_READ, MAP_NOCACHE|MAP_FILE|MAP_PRIVATE|MAP_POPULATE, fd, file_offset)) == MAP_FAILED)
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_2MB (21 << MAP_HUGE_SHIFT)
+#endif
+    //    void * const p = mmap(NULL, chunksize, PROT_READ, MAP_NOCACHE|MAP_FILE|MAP_PRIVATE|MAP_POPULATE, fd, file_offset);
+    void * const p = mmap(NULL, chunksize, PROT_READ, MAP_NOCACHE|MAP_FILE|MAP_PRIVATE, fd, file_offset);
+    if(p == MAP_FAILED)
       return -1;
-    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
+    //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
+    //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
+    madvise(p,chunksize,MADV_SEQUENTIAL); // hopefully will cause OS to read everything ahead
     if(sha1hash)
       SHA1_Update(&sha1_context,p,chunksize);
     if(sha256hash)
       SHA256_Update(&sha256_context,p,chunksize);
       
-    r = munmap(p,mlength);
+    int r = munmap(p,chunksize);
     assert(r != -1);
     count += chunksize;
   }
@@ -399,24 +401,24 @@ long long hash_file(int fd,struct stat const *statbuf,unsigned char *sha1hash,un
 // Convert hex-ascii string of arbitrary length to binary byte string
 // Unknown characters are treated as 0's
 // Caller must ensure space
-int hextobinary(unsigned char *out,const char *in,int bytes){
-  int i;
+int hextobinary(unsigned char * const out,char const *in,int const bytes){
+  for(int i=0; i<bytes; i++){
 
-  for(i=0; i<bytes; i++){
-    int bb;
-    char c;
-
-    bb = 0;
-    c = tolower(*in++);
-    if(isdigit(c))
-      bb = (unsigned)(c - '0') << 4;
-    else if(isxdigit(c))
-      bb = (unsigned)(c + 10 - 'a') << 4;
-    c = tolower(*in++);
-    if(isdigit(c))
-      bb += (unsigned)(c - '0');
-    else if(isxdigit(c))
-      bb += (unsigned)(c + 10 - 'a');
+    int bb = 0;
+    {
+      char const c = tolower(*in++);
+      if(isdigit(c))
+	bb = (unsigned)(c - '0') << 4;
+      else if(isxdigit(c))
+	bb = (unsigned)(c + 10 - 'a') << 4;
+    }
+    {
+      char const c = tolower(*in++);
+      if(isdigit(c))
+	bb += (unsigned)(c - '0');
+      else if(isxdigit(c))
+	bb += (unsigned)(c + 10 - 'a');
+    }
     out[i] = bb;
   }
   return 0;
@@ -424,7 +426,7 @@ int hextobinary(unsigned char *out,const char *in,int bytes){
 
 // Convert integer 0-15 to hex character 0-f
 // Invalid values are converted to space
-static inline char b2h(int x){
+static inline char b2h(int const x){
   if(x >= 0 && x <= 9)
     return '0' + x;
   else if(x <= 15)
@@ -436,10 +438,8 @@ static inline char b2h(int x){
 // Convert binary byte string to hex-ascii string, arbitrary length
 // Terminate with null, return pointer to the null
 // Caller must ensure space
-char *binarytohex(char *out,const unsigned char *in,int bytes){
-  int i;
-
-  for(i=0;i<bytes;i++){
+char *binarytohex(char *out,unsigned char const *in,int const bytes){
+  for(int i=0;i<bytes;i++){
     *out++ = b2h((in[i] >> 4) & 0xf);
     *out++ = b2h(in[i] & 0xf);
   }
@@ -447,26 +447,24 @@ char *binarytohex(char *out,const unsigned char *in,int bytes){
   return out;
 }
 
-
-
 // Copy source file to target file, along with attributes, modes and owners
 // Return number of bytes copied
 // If error in copying data, delete target and return -1
 // Errors in copying attributes or ownership are ignored
-long long copyfile(char *source,char *target){
-  int fdi=-1,fdo=-1,len,errno_save;
+long long copyfile(char const *source,char const *target){
   long long bytes_copied = -1;
   char *taglist;
-  int tagsize;
+
   struct stat statbuf;
   char buffer[BUFSIZ];
 
-  if((fdi = open(source,O_RDONLY)) == -1)
+  int const fdi = open(source,O_RDONLY);
+  if(fdi == -1)
     return -1;
 
   if(fstat(fdi,&statbuf) == -1){
     // Should probably be an assert()
-    errno_save = errno;
+    int const errno_save = errno;
     close(fdi);
     errno = errno_save;
     return -1;
@@ -476,8 +474,9 @@ long long copyfile(char *source,char *target){
     errno = EISDIR;
     return -1; // Must be a regular file
   }
-  if((fdo = open(target,O_RDWR|O_TRUNC|O_CREAT,statbuf.st_mode)) == -1){
-    errno_save = errno;
+  int const fdo = open(target,O_RDWR|O_TRUNC|O_CREAT,statbuf.st_mode);
+  if(fdo == -1){
+    int const errno_save = errno;
     close(fdi);
     errno = errno_save;
     return -1;
@@ -488,6 +487,7 @@ long long copyfile(char *source,char *target){
 #endif
       
   // Copy file
+  int len;
   while((len = read(fdi,buffer,BUFSIZ)) > 0){
     if(write(fdo,buffer,len) != len){
       len = -1;
@@ -496,7 +496,7 @@ long long copyfile(char *source,char *target){
     bytes_copied += len;
   }
   if(len < 0) {
-    errno_save = errno;
+    int const errno_save = errno;
     close(fdo);
     close(fdi);
     unlink(target);
@@ -524,7 +524,7 @@ long long copyfile(char *source,char *target){
 #endif
 
   // Copy any extended attributes
-  tagsize = 16384;
+  int tagsize = 16384;
   taglist = malloc(tagsize);
   
   if((tagsize = FLISTXATTR(fdi,taglist,tagsize)) == -1 && errno == ERANGE){
@@ -535,15 +535,11 @@ long long copyfile(char *source,char *target){
     tagsize = FLISTXATTR(fdi,taglist,tagsize);
   }
   if(tagsize > 0){
-    int attsize;
-    char *attval;
-    char *tag;
-
-    attsize = 16384;
-    attval = malloc(attsize);
+    int attsize = 16384;
+    char *attval = malloc(attsize);
     assert(attval != NULL);
 
-    for(tag=taglist;*tag != '\0';tag += strlen(tag)){
+    for(char *tag=taglist;*tag != '\0';tag += strlen(tag)){
       if((attsize = FGETXATTR(fdi,tag,attval,attsize)) == -1 && errno == ERANGE){
 	// buffer too small for attribute, enlarge it and try again
 	attsize = FGETXATTR(fdi,tag,NULL,0);
@@ -551,10 +547,9 @@ long long copyfile(char *source,char *target){
 	assert(attval != NULL);
 	attsize = FGETXATTR(fdi,tag,attval,attsize);
       } else if(attsize > 0){
-	int k = FSETXATTR(fdo,tag,attval,attsize,0);
+	int const k = FSETXATTR(fdo,tag,attval,attsize,0);
 	(void)k;
 #if 0
-
 	printf("setting tag %s return %d\n",tag,k);
 #endif
       }
@@ -572,37 +567,39 @@ long long copyfile(char *source,char *target){
 }
 
 // Create any needed subdirectories in a pathname
-int make_paths(char *pathname,int mode){
-  char *cp,*wp;
-  struct stat statbuf;
-  char *workcopy;
-
+int make_paths(char const *pathname,int mode){
   if(strlen(pathname) > PATH_MAX)
     return ENAMETOOLONG;
 
-  workcopy = strdup(pathname);
-  if((cp = strrchr(workcopy,'/')) == NULL){
-    // pathname is in current directory, nothing to do
-    free(workcopy);
-    return 0;
+  char *workcopy = strdup(pathname);
+  {
+    char * const cp = strrchr(workcopy,'/');
+    if(cp == NULL){
+      // pathname is in current directory, nothing to do
+      free(workcopy);
+      return 0;
+    }
+    *cp = '\0'; // Leave just the directory prefix in workcopy
   }
-  *cp = '\0'; // Leave just the directory prefix in workcopy
-
   // Does the directory already exist?
-  if(lstat(workcopy,&statbuf) == 0 && (statbuf.st_mode & S_IFMT) == S_IFDIR){
-    // Everything appears honkey-dory
-    free(workcopy);
-    return 0;
+  {
+    struct stat statbuf;
+    if(lstat(workcopy,&statbuf) == 0 && (statbuf.st_mode & S_IFMT) == S_IFDIR){
+      // Everything appears honkey-dory
+      free(workcopy);
+      return 0;
+    }
   }
-  wp = workcopy;
+  char *wp = workcopy;
   while(wp != NULL){
-    cp = strchr(wp,'/'); // Look for terminal / on current component
+    char * const cp = strchr(wp,'/'); // Look for terminal / on current component
     if(cp != NULL){
       *cp = '\0'; // Temporarily end string here
       wp = cp+1;  // and look just beyond it on next iteration
     } else
       wp = NULL;  // this is the last iteration
 
+    struct stat statbuf;
     if(lstat(workcopy,&statbuf) == -1){
       // try to make it
       if(mkdir(workcopy,mode) == -1){
@@ -627,7 +624,7 @@ int make_paths(char *pathname,int mode){
 // Paranoid check to ensure the hash functions aren't broken
 // A broken hash function that returned the same value regardless of contents would be a disaster!
 int sha256_selftest(void){
-  static char test_vector1[] = "abcdefghijklmnopqrstuvwxyz\n";
+  static char const test_vector1[] = "abcdefghijklmnopqrstuvwxyz\n";
   static unsigned char test_vector1_hash[SHA256_DIGEST_LENGTH] = {
     0x10, 0x10, 0xa7, 0xe7, 0x61, 0x61, 0x09, 0x80, 0xac, 0x59,
     0x13, 0x59, 0xc8, 0x71, 0xf7, 0x24, 0xde, 0x15, 0x0f, 0x23,
@@ -635,7 +632,7 @@ int sha256_selftest(void){
     0x1d, 0x91,
   };
 
-  static char test_vector2[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
+  static char const test_vector2[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
   static unsigned char test_vector2_hash[SHA256_DIGEST_LENGTH] = {
     0xa0, 0x6b, 0x16, 0x8d, 0x8e, 0x72, 0xc0, 0x69, 0xaa, 0x3c, 0xc5,
     0x8d, 0x64, 0xb9, 0x2a, 0x30, 0x0f, 0x9f, 0x82, 0x12, 0x7f, 0xac,
@@ -658,13 +655,13 @@ int sha256_selftest(void){
 }
 
 int sha1_selftest(void){
-  static char test_vector1[] = "abcdefghijklmnopqrstuvwxyz\n";
+  static char const test_vector1[] = "abcdefghijklmnopqrstuvwxyz\n";
   static unsigned char test_vector1_hash[SHA_DIGEST_LENGTH] = {
     0x8c, 0x72, 0x3a, 0x0f, 0xa7, 0x0b, 0x11, 0x10, 0x17, 0xb4,
     0xa6, 0xf0, 0x6a, 0xfe, 0x1c, 0x0d, 0xbc, 0xec, 0x14, 0xe3
   };
 
-  static char test_vector2[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
+  static char const test_vector2[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
   static unsigned char test_vector2_hash[SHA_DIGEST_LENGTH] = {
     0x7c, 0x99, 0x8c, 0x94, 0x01, 0xe4, 0xdc, 0x9d, 0x89, 0x5c,
     0x88, 0x8d, 0xf6, 0x59, 0xd5, 0x9d, 0x1b, 0x19, 0xd8, 0xc1
