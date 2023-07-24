@@ -1,4 +1,4 @@
-// $Id: filehash.h,v 1.14 2021/09/28 06:00:59 karn Exp $
+// $Id: filehash.h,v 1.14 2021/09/28 06:00:59 karn Exp karn $
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -78,13 +78,12 @@ struct attr256 {
 #define SHA256_MISMATCH 2
 #define MISSING_TAGS 4
 
-int hextobinary(unsigned char *out,const char *in,int bytes);
-char *binarytohex(char *out,const unsigned char *in,int bytes);
-long long copyfile(char *source,char *target);
-int make_paths(char *pathname,int mode);
+int hextobinary(unsigned char *out,char const *in,int bytes);
+char *binarytohex(char *out,unsigned char const *in,int bytes);
+long long copyfile(char const *source,char const *target);
+int make_paths(char const *pathname,int mode);
 int sha256_selftest(void);
 int sha1_selftest(void);
-int set_tag(int fd,const struct stat *,char *attribute,void *value,int len);
 long long update_tag_fd(int fd,struct stat const *);
 int verify_tag_fd(int fd,struct stat const *);
 long long hash_file(int fd,struct stat const *statbuf,unsigned char *sha1hash,unsigned char *sha256hash);
