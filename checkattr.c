@@ -305,7 +305,8 @@ int main(int argc,char *argv[]){
       } // ll > 0
     } // while(!feof
   }
-  print_stats();
+  if(Verbose || !Quiet)
+    print_stats();
   exit(0);
 }
 
