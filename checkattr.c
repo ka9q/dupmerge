@@ -32,6 +32,7 @@
 #include <sys/xattr.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/file.h>
 #include <limits.h>
 #include <unistd.h>
 #include <openssl/sha.h>
@@ -422,14 +423,20 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
 	}
       }
     } else {
-      long long const r = update_tag_fd(fd,statbuf);
-      if(Verbose && r > 0)
-	printf("Updated %s\n",pathname);
-      if(r == -1){
+      if(flock(fd,LOCK_EX|LOCK_NB) == -1){
+	if(Verbose)
+	  printf("Skipping %s\n",pathname);
+      } else {
+	long long const r = update_tag_fd(fd,statbuf);
+	flock(fd,LOCK_UN);
+	if(Verbose && r > 0)
+	  printf("Updated %s\n",pathname);
+	if(r == -1){
 	  printf("%s: update_tag_fd error; %s\n",pathname,strerror(errno));
-      } else if(r > 0){
-	Bytes_hashed += r;
-	Files_hashed++;
+	} else if(r > 0){
+	  Bytes_hashed += r;
+	  Files_hashed++;
+	}
       }
     }
     if(fd != -1)
