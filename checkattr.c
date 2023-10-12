@@ -424,7 +424,7 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
       }
     } else {
       if(flock(fd,LOCK_EX|LOCK_NB) == -1){
-	if(Verbose)
+	if(Verbose > 1)
 	  printf("Skipping %s\n",pathname);
       } else {
 	long long const r = update_tag_fd(fd,statbuf);
