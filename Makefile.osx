@@ -17,7 +17,7 @@ mergefiles: mergefiles.o
 	$(CC) $(CFLAGS) -o mergefiles mergefiles.o
 
 checkattr: checkattr.o library.o
-	$(CC) $(CFLAGS) -o checkattr checkattr.o library.o -l ncurses -l crypto
+	$(CC) $(CFLAGS) -o checkattr checkattr.o library.o -l crypto
 
 dupmerge: dupmerge.o library.o
 	$(CC) $(CFLAGS) -o dupmerge dupmerge.o library.o -l crypto
