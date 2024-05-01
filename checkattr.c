@@ -328,7 +328,8 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
   }
   if(statbuf == NULL || typeflag == FTW_NS){
     Stat_fails++;
-    printf("process_file stat(%s) failed: %s\n",pathname,strerror(errno));
+    if(Verbose)
+      printf("process_file stat(%s) failed: %s\n",pathname,strerror(errno));
     goto done; // Stat() failed, no analysis possible
   }
   // Count file types
