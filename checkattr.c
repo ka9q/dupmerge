@@ -1,8 +1,7 @@
-// Walk through file system updating and checking SHA1/256 tags
+// Walk through file system updating and checking SHA256 tags
 // Phil Karn, KA9Q
 // Apr 2018
-// New unified SHA1/SHA256 version May 2020
-// $Id: checkattr.c,v 1.35 2022/04/25 07:55:15 karn Exp karn $
+// SHA1 removed, new EVP API used Sept 2025
 
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
@@ -15,8 +14,6 @@
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64 // For Linux on 32-platforms
 #endif
-
-
 
 #include <stdio.h>
 #include <sys/time.h>
@@ -90,7 +87,6 @@ unsigned long long Perm_denied;
 unsigned long long Stat_fails;
 unsigned long long Open_fails;
 
-unsigned long long SHA1_fails;
 unsigned long long SHA256_fails;
 unsigned long long Missing_tag;
 
@@ -128,8 +124,6 @@ int main(int argc,char *argv[]){
   int nftw_flags = FTW_PHYS|FTW_ACTIONRETVAL;
 
   if(sha256_selftest() != 0)
-    exit(1);
-  if(sha1_selftest() != 0)
     exit(1);
 
   /* Process command line args */
@@ -411,10 +405,6 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
 	if(Verbose)
 	  printf("%s: verify_tag_fd error; %s\n",pathname,strerror(errno));
       } else {
-	if(r & SHA1_MISMATCH){
-	  SHA1_fails++;
-	  printf("SHA1 mismatch: %s\n",pathname);
-	}
 	if(r & SHA256_MISMATCH){
 	  SHA256_fails++;
 	  printf("SHA256 mismatch: %s\n",pathname);      
@@ -507,7 +497,6 @@ void print_stats(void){
     printf("Bytes hashed: %'llu\n",Bytes_hashed);
 
   if(Check_tags){
-    printf("SHA1 compare failures: %'llu\n",SHA1_fails);
     printf("SHA256 compare failures: %'llu\n",SHA256_fails);  
   } else {
     printf("Files updated: %'llu\n",Files_hashed);

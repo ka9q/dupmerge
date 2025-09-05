@@ -41,10 +41,8 @@
 
 // Linux requires all user-space external attributes to be explicitly prefixed with "user."
 #if __APPLE__
-#define ATTR_NAME_1 "sha1"
 #define ATTR_NAME_256 "sha256"
 #else
-#define ATTR_NAME_1 "user.sha1"
 #define ATTR_NAME_256 "user.sha256"
 #endif
 
@@ -64,17 +62,12 @@
 
 enum tagstate { MISSING, OLD, CURRENT };
 
-struct attr1 {
-  struct timespec mtime;
-  unsigned char hash[SHA_DIGEST_LENGTH];
-};
 struct attr256 {
   struct timespec mtime;
   unsigned char hash[SHA256_DIGEST_LENGTH];
 };
 
 
-#define SHA1_MISMATCH 1
 #define SHA256_MISMATCH 2
 #define MISSING_TAGS 4
 
@@ -83,12 +76,10 @@ char *binarytohex(char *out,unsigned char const *in,int bytes);
 long long copyfile(char const *source,char const *target);
 int make_paths(char const *pathname,int mode);
 int sha256_selftest(void);
-int sha1_selftest(void);
 long long update_tag_fd(int fd,struct stat const *);
 int verify_tag_fd(int fd,struct stat const *);
-long long hash_file(int fd,struct stat const *statbuf,unsigned char *sha1hash,unsigned char *sha256hash);
+long long hash_file(int fd,struct stat const *statbuf,void *sha256hash);
 int getattr256(int fd,struct attr256 *attr);
-int getattr1(int fd,struct attr1 *attr);
 
 // Compare two timespec structures
 static inline int time_cmp(struct timespec const *a,struct timespec const *b){

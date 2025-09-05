@@ -19,7 +19,7 @@
 
 
 #include <stdio.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -72,42 +72,6 @@ int getattr256(int const fd,struct attr256 * const attr){
   } else
     return -1;
 }
-// Read a SHA1 attribute in 3 formats:
-// int32_t mtime, hash[20]
-// int64_t mtime.tv_sec, int32_t mtime.tv_nsec, hash[20]
-// int64_t mtime_tv.sec, int64_t mtime.tv_nsec, hash[20]
-
-int getattr1(int const fd,struct attr1 * const attr){
-  unsigned char attrbuf[1024];
-
-  int const length = FGETXATTR(fd,ATTR_NAME_1,&attrbuf,sizeof(attrbuf));
-  if(length == sizeof(int32_t) + SHA_DIGEST_LENGTH){
-    // Old version with 32-bit time_t and no nanoseconds
-    attr->mtime.tv_sec = * (int32_t *)&attrbuf[0];
-    attr->mtime.tv_nsec = 0;
-    memcpy(attr->hash,&attrbuf[4],SHA_DIGEST_LENGTH);
-    return 0;
-  } else if(length == sizeof(int64_t) + SHA_DIGEST_LENGTH){
-    // Old version with 64-bit time_t and no nanoseconds
-    attr->mtime.tv_sec = * (int64_t *)&attrbuf[0];
-    attr->mtime.tv_nsec = 0;
-    memcpy(attr->hash,&attrbuf[8],SHA_DIGEST_LENGTH);
-    return 0;
-  } else if(length == sizeof(int64_t) + sizeof(int32_t) + SHA_DIGEST_LENGTH){
-    // 8 + 4 format
-    attr->mtime.tv_sec = * (int64_t *)&attrbuf[0];
-    attr->mtime.tv_nsec = * (int32_t *)&attrbuf[8];
-    memcpy(attr->hash,&attrbuf[12],SHA_DIGEST_LENGTH);
-    return 0;
-  } else if(length == sizeof(int64_t) + sizeof(int64_t) + SHA_DIGEST_LENGTH){
-    // 8 + 8 format
-    attr->mtime.tv_sec = * (int64_t *)&attrbuf[0];
-    attr->mtime.tv_nsec = * (int64_t *)&attrbuf[8]; // Will truncate if host nsec is 4 bytes, that's OK
-    memcpy(attr->hash,&attrbuf[16],SHA_DIGEST_LENGTH);
-    return 0;
-  } else
-    return -1;
-}
 // Temporarily enable write permissions so we can set an attribute
 // May fail if we're not root or don't own the file
 static int temp_enable(int const fd,struct stat const * const statbuf){
@@ -128,30 +92,6 @@ static int temp_enable(int const fd,struct stat const * const statbuf){
   }
   return saved_mode;
 
-}
-// Set sha1 attribute
-static int set_tag_1(int const fd,const struct stat *statbuf,struct attr1 const * const attr){
-  assert(fd != -1);
-
-  struct stat sb;
-  if(statbuf == NULL){
-    if(fstat(fd,&sb) == -1)
-      return -1;
-    statbuf = &sb;
-  }
-  int const saved_mode = temp_enable(fd,statbuf);
-  char attrbuf[32];
-  * (int64_t *)&attrbuf[0] = attr->mtime.tv_sec;
-  * (int32_t *)&attrbuf[8] = (int32_t)attr->mtime.tv_nsec;
-  memcpy(&attrbuf[12],attr->hash,SHA_DIGEST_LENGTH);
-
-  int const rval = FSETXATTR(fd,ATTR_NAME_1,attrbuf,sizeof(attrbuf),0);
-  int const errno_save = errno;  // Return errno (if any) of setxattr to caller
-  if(saved_mode != -1)
-    fchmod(fd,saved_mode);        // Restore mode
-
-  errno = errno_save;
-  return rval;
 }
 // Set sha256 attribute
 static int set_tag_256(int const fd,const struct stat *statbuf,struct attr256 const * const attr){
@@ -179,7 +119,7 @@ static int set_tag_256(int const fd,const struct stat *statbuf,struct attr256 co
   return rval;
 }
 
-// Take open file descriptor, update sha1 and sha256 hashes if out of date
+// Take open file descriptor, update sha256 hash if out of date
 long long update_tag_fd(int fd,struct stat const *statbuf){
   assert(fd != -1);
 
@@ -196,25 +136,11 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
 #if 0
   printf("update_tag_fd(%d) inode %lld size %lld",fd,(long long int)statbuf->st_ino,(long long int)statbuf->st_size);
 #endif
-  struct attr1 attr1;
-  int const r1 = getattr1(fd,&attr1);
-  int attr1_state = MISSING;
-  
-  if(r1 == -1 && errno == ENOTSUP){
-    // File system doesn't support xattrs
-    return -1;
-  } else if(r1 == 0){
-    if(time_cmp(&attr1.mtime,&statbuf->st_mtim) == 0){
-      attr1_state = CURRENT;
-    } else
-      attr1_state = OLD;
-  }
-
   // Check status of SHA256 tag
   struct attr256 attr256;
   int attr256_state = MISSING;
   int const r256 = getattr256(fd,&attr256);
-  assert(!(r256 == -1 && errno == ENOTSUP));  // Should be already caught by read of sha1 xattr
+  assert(!(r256 == -1 && errno == ENOTSUP));
   if(r256 == 0){
     if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
       attr256_state = CURRENT;
@@ -223,15 +149,11 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
   }
     
 #if 0
-  printf(" sha256: %s, sha1: %s",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing",
-	 attr1_state == CURRENT ? "current" : attr1_state == OLD ? "old" : "missing");
+  printf(" sha256: %s",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
 #endif
 
-  if(attr256_state != CURRENT || attr1_state != CURRENT){
-    // Do hashes together so we make only one file pass
-    long long const count = hash_file(fd,statbuf,
-		      (attr1_state != CURRENT) ? attr1.hash : NULL,
-		      (attr256_state != CURRENT) ? attr256.hash : NULL);
+  if(attr256_state != CURRENT){
+    long long const count = hash_file(fd,statbuf,(attr256_state != CURRENT) ? attr256.hash : NULL);
 #if 0
     printf(" hash_file returns %lld\n",count);
 #endif
@@ -240,13 +162,6 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
 
     // Write new attribute(s)
     // We always write the more compact form, with 32 bits for the nanosecond count
-    if(attr1_state != CURRENT){
-      attr1.mtime = statbuf->st_mtim;
-      if(set_tag_1(fd,statbuf,&attr1) == -1){
-	assert(errno != ENOTSUP); // Should already have been detected by the getattr
-	return -1;
-      }
-    }
     if(attr256_state != CURRENT){
       attr256.mtime = statbuf->st_mtim;
       if(set_tag_256(fd,statbuf,&attr256) == -1){
@@ -277,24 +192,11 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
 #if 0
   printf("verify_tag_fd(%d) inode %lld size %lld",fd,(long long int)statbuf->st_ino,(long long int)statbuf->st_size);
 #endif
-  struct attr1 attr1;
-  int attr1_state = MISSING;
-  int const r1 = getattr1(fd,&attr1);
-  if(r1 == -1 && errno == ENOTSUP){
-    // File system doesn't support xattrs
-    return -1;
-  } else if(r1 == 0){
-    if(time_cmp(&attr1.mtime,&statbuf->st_mtim) == 0){
-      attr1_state = CURRENT;
-    } else
-      attr1_state = OLD;
-  }
-
   // Check status of SHA256 tag
   struct attr256 attr256;
   int attr256_state = MISSING;
   int const r256 = getattr256(fd,&attr256);
-  assert(!(r256 == -1 && errno == ENOTSUP));  // Should be already caught by read of sha1 xattr
+  assert(!(r256 == -1 && errno == ENOTSUP));
   if(r256 == 0){
     if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
       attr256_state = CURRENT;
@@ -303,21 +205,16 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
   }
     
 #if 0
-  printf(" sha256: %s, sha1: %s\n",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing",
-	 attr1_state == CURRENT ? "current" : attr1_state == OLD ? "old" : "missing");
+  printf(" sha256: %s,\n",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
 #endif
 
   // Verify only current hashes; ignore old and missing ones
-  if(attr256_state != CURRENT && attr1_state != CURRENT)
+  if(attr256_state != CURRENT)
     return MISSING_TAGS;
 
-  // Do hashes together so we make only one file pass
-  struct attr1 new_attr1;
   struct attr256 new_attr256;
 
-  long long const count = hash_file(fd,statbuf,
-			      (attr1_state == CURRENT) ? new_attr1.hash : NULL,
-			      (attr256_state == CURRENT) ? new_attr256.hash : NULL);
+  long long const count = hash_file(fd,statbuf,(attr256_state == CURRENT) ? new_attr256.hash : NULL);
 #if 0
   printf(" hash_file returns %lld\n",count);
 #endif
@@ -325,20 +222,14 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
     return -1;
 
   int rval = 0;
-  if(attr1_state == CURRENT && memcmp(attr1.hash,new_attr1.hash,sizeof(new_attr1.hash)) != 0){
-    // SHA1 hashes don't match!
-    rval |= SHA1_MISMATCH;
-  }
   if(attr256_state == CURRENT && memcmp(attr256.hash,new_attr256.hash,sizeof(new_attr256.hash)) != 0){
     rval |= SHA256_MISMATCH;
   }
   return rval;
 }
 
-// Compute SHA1 and/or SHA256 hashes of entire file already open with file descriptor fd
-// Computing both hashes in one pass of the file is much more efficient
-// If this turns out to be CPU bound on slower machines, consider doing it in two threads
-long long hash_file(int const fd,struct stat const *statbuf,unsigned char * const sha1hash,unsigned char * const sha256hash){
+// Compute SHA256 hash of entire file already open with file descriptor fd
+long long hash_file(int const fd,struct stat const *statbuf,void * const sha256hash){
   assert(fd != -1);
 
   struct stat sb;
@@ -348,18 +239,12 @@ long long hash_file(int const fd,struct stat const *statbuf,unsigned char * cons
     statbuf = &sb;
   }
 
-  if(sha1hash == NULL && sha256hash == NULL)
+  if(sha256hash == NULL)
     return 0; // Nothing to do!
   
-
-  SHA_CTX sha1_context;
-  SHA256_CTX sha256_context;
-
-
-  if(sha1hash != NULL)
-    SHA1_Init(&sha1_context);
-  if(sha256hash != NULL)
-    SHA256_Init(&sha256_context);
+  // New EVP API used Aug 2025
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  EVP_DigestInit_ex(ctx,EVP_sha256(),NULL);
   
   off_t remain = statbuf->st_size;
   //  size_t chunksize = 512 * sysconf(_SC_PAGESIZE); // Matches a 2MB huge page on x86, might help
@@ -382,19 +267,14 @@ long long hash_file(int const fd,struct stat const *statbuf,unsigned char * cons
     //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
     //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
     madvise(p,chunksize,MADV_SEQUENTIAL); // hopefully will cause OS to read everything ahead
-    if(sha1hash)
-      SHA1_Update(&sha1_context,p,chunksize);
-    if(sha256hash)
-      SHA256_Update(&sha256_context,p,chunksize);
+    EVP_DigestUpdate(ctx,p,chunksize);
       
     int r = munmap(p,chunksize);
     assert(r != -1);
     count += chunksize;
   }
-  if(sha1hash)
-    SHA1_Final(sha1hash,&sha1_context);
-  if(sha256hash)
-    SHA256_Final(sha256hash,&sha256_context);
+  EVP_DigestFinal_ex(ctx,sha256hash,NULL);
+  EVP_MD_CTX_free(ctx);
   return count;
 }
 
@@ -654,30 +534,3 @@ int sha256_selftest(void){
   return 0;
 }
 
-int sha1_selftest(void){
-  static char const test_vector1[] = "abcdefghijklmnopqrstuvwxyz\n";
-  static unsigned char test_vector1_hash[SHA_DIGEST_LENGTH] = {
-    0x8c, 0x72, 0x3a, 0x0f, 0xa7, 0x0b, 0x11, 0x10, 0x17, 0xb4,
-    0xa6, 0xf0, 0x6a, 0xfe, 0x1c, 0x0d, 0xbc, 0xec, 0x14, 0xe3
-  };
-
-  static char const test_vector2[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n";
-  static unsigned char test_vector2_hash[SHA_DIGEST_LENGTH] = {
-    0x7c, 0x99, 0x8c, 0x94, 0x01, 0xe4, 0xdc, 0x9d, 0x89, 0x5c,
-    0x88, 0x8d, 0xf6, 0x59, 0xd5, 0x9d, 0x1b, 0x19, 0xd8, 0xc1
-  };
-
-  unsigned char hash[SHA_DIGEST_LENGTH];
-
-  SHA1((void *)test_vector1,strlen(test_vector1),hash);
-  if(memcmp(hash,test_vector1_hash,SHA_DIGEST_LENGTH) != 0){
-    printf("SHA1 hash function self-test failed on test vector 1!\n");
-    return -1;
-  }
-  SHA1((void *)test_vector2,strlen(test_vector2),hash);
-  if(memcmp(hash,test_vector2_hash,SHA_DIGEST_LENGTH) != 0){
-    printf("SHA1 hash function self-test failed on test vector 2!\n");
-    return -1;
-  }
-  return 0;
-}
