@@ -142,9 +142,8 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
     // Check status of flat, raw SHA256 tag (user.sha256)
     struct attr256 attr256 = {0};
     int attr256_state = MISSING;
-    int const r256 = getattr256(fd,&attr256,ATTR_NAME_256);
-    assert(!(r256 == -1 && errno == ENOTSUP));
-    if(r256 == 0){
+    int const r = getattr256(fd,&attr256,ATTR_NAME_256);
+    if(r == 0){
       if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
 	attr256_state = CURRENT;
       } else
@@ -183,9 +182,8 @@ long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
   // Check status of SHA256OGG tag
   struct attr256 attr256ogg = {0};
   int attr256ogg_state = MISSING;
-  int const r256 = getattr256(fd,&attr256ogg,ATTR_NAME_256OGG);
-  assert(!(r256 == -1 && errno == ENOTSUP));
-  if(r256 == 0){
+  int const r = getattr256(fd,&attr256ogg,ATTR_NAME_256OGG);
+  if(r == 0){
     if(time_cmp(&attr256ogg.mtime,&statbuf->st_mtim) == 0){
       attr256ogg_state = CURRENT;
     } else
@@ -228,9 +226,8 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
   // Check status of SHA256 tag
   struct attr256 attr256 = {0};
   int attr256_state = MISSING;
-  int const r256 = getattr256(fd,&attr256,ATTR_NAME_256);
-  assert(!(r256 == -1 && errno == ENOTSUP));
-  if(r256 == 0){
+  int const r = getattr256(fd,&attr256,ATTR_NAME_256);
+  if(r == 0){
     if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
       attr256_state = CURRENT;
     } else
