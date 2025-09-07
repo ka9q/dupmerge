@@ -1,8 +1,8 @@
-// $Id: library.c,v 1.16 2021/09/28 06:02:00 karn Exp karn $
 // User-callable library for hash-based indexing
 // Phil Karn, KA9Q
 // Dec 2012
 // Updated 2018 to add SHA256
+// Updated Sept 2025 to remove SHA1, add sha256ogg
 
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
@@ -16,7 +16,6 @@
 #ifndef _FILE_OFFSET_BITS
 #define _FILE_OFFSET_BITS 64
 #endif
-
 
 #include <stdio.h>
 #include <openssl/evp.h>
@@ -32,6 +31,7 @@
 #include <string.h>
 #include <limits.h>
 #include <fcntl.h>
+
 #include "filehash.h"
 
 // Read a SHA256 attribute in 3 formats:
@@ -41,10 +41,10 @@
 
 // Implicitly little endian, should add macros for portability to big-endian systems
 
-int getattr256(int const fd,struct attr256 * const attr){
+int getattr256(int const fd,struct attr256 * const attr,char const *attr_name){
   unsigned char attrbuf[1024];
 
-  int const length = FGETXATTR(fd,ATTR_NAME_256,&attrbuf,sizeof(attrbuf));
+  int const length = FGETXATTR(fd,attr_name,&attrbuf,sizeof(attrbuf));
   if(length == sizeof(int32_t) + SHA256_DIGEST_LENGTH){
     // Old version with 32-bit time_t and no nanoseconds
     attr->mtime.tv_sec = * (int32_t *)&attrbuf[0];
@@ -93,29 +93,32 @@ static int temp_enable(int const fd,struct stat const * const statbuf){
   return saved_mode;
 
 }
-// Set sha256 attribute
-static int set_tag_256(int const fd,const struct stat *statbuf,struct attr256 const * const attr){
+// Set sha256 attribute with name 'attr_name'
+static int set_tag_256(int const fd,const struct stat *statbuf,struct attr256 const * const attr, const char *attr_name){
   assert(fd != -1);
 
-  struct stat sb;
+  struct stat sb = {0};
   if(statbuf == NULL){
     if(fstat(fd,&sb) == -1)
       return -1;
     statbuf = &sb;
   }
   int const saved_mode = temp_enable(fd,statbuf);
-  char attrbuf[44];
+  uint8_t attrbuf[44];
   * (int64_t *)&attrbuf[0] = attr->mtime.tv_sec;
   * (int32_t *)&attrbuf[8] = (int32_t)attr->mtime.tv_nsec;
   memcpy(&attrbuf[12],attr->hash,SHA256_DIGEST_LENGTH);
 
-  int const rval = FSETXATTR(fd,ATTR_NAME_256,attrbuf,sizeof(attrbuf),0);
+  int const rval = FSETXATTR(fd,attr_name,attrbuf,sizeof(attrbuf),0);
 
   int const errno_save = errno;  // Return errno (if any) of setxattr to caller
   if(saved_mode != -1)
     fchmod(fd,saved_mode);        // Restore mode
 
   errno = errno_save;
+#if 0
+  printf("set_tag_256: rval %d errno %d %s\n",rval,errno,rval != 0 ? strerror(errno):"");
+#endif
   return rval;
 }
 
@@ -123,7 +126,7 @@ static int set_tag_256(int const fd,const struct stat *statbuf,struct attr256 co
 long long update_tag_fd(int fd,struct stat const *statbuf){
   assert(fd != -1);
 
-  struct stat sb;
+  struct stat sb = {0};
   if(statbuf == NULL){
     if(fstat(fd,&sb) == -1)
       return -1;
@@ -133,52 +136,82 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
   if((statbuf->st_mode & S_IFMT) != S_IFREG)
     return -1; // Not regular file
 
+  int64_t count = 0;
+
+  {
+    // Check status of flat, raw SHA256 tag (user.sha256)
+    struct attr256 attr256 = {0};
+    int attr256_state = MISSING;
+    int const r256 = getattr256(fd,&attr256,ATTR_NAME_256);
+    assert(!(r256 == -1 && errno == ENOTSUP));
+    if(r256 == 0){
+      if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
+	attr256_state = CURRENT;
+      } else
+	attr256_state = OLD;
+    }
 #if 0
-  printf("update_tag_fd(%d) inode %lld size %lld",fd,(long long int)statbuf->st_ino,(long long int)statbuf->st_size);
+    printf("sha256: %s",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
 #endif
-  // Check status of SHA256 tag
-  struct attr256 attr256;
-  int attr256_state = MISSING;
-  int const r256 = getattr256(fd,&attr256);
+    if(attr256_state == OLD || attr256_state == MISSING){
+      count = hash_file(fd,statbuf,&attr256.hash);
+#if 0
+      printf(" hash_file returns %lld\n",(long long)count);
+#endif
+      attr256.mtime = statbuf->st_mtim;
+      set_tag_256(fd,statbuf,&attr256,ATTR_NAME_256); // check return?
+    }
+  }
+  return count;
+}
+long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
+  assert(fd != -1);
+
+  struct stat sb = {0};
+  if(statbuf == NULL){
+    if(fstat(fd,&sb) == -1)
+      return -1;
+    statbuf = &sb;
+  }
+
+  if((statbuf->st_mode & S_IFMT) != S_IFREG)
+    return -1; // Not regular file
+
+  int64_t count = 0;
+
+  // OGG-special hash with stream ID and CRCs zeroed (user.sha256ogg)
+  // Check status of SHA256OGG tag
+  struct attr256 attr256ogg = {0};
+  int attr256ogg_state = MISSING;
+  int const r256 = getattr256(fd,&attr256ogg,ATTR_NAME_256OGG);
   assert(!(r256 == -1 && errno == ENOTSUP));
   if(r256 == 0){
-    if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
-      attr256_state = CURRENT;
+    if(time_cmp(&attr256ogg.mtime,&statbuf->st_mtim) == 0){
+      attr256ogg_state = CURRENT;
     } else
-      attr256_state = OLD;
+      attr256ogg_state = OLD;
   }
-    
+  if(attr256ogg_state != CURRENT){
+    count = hash_ogg_file(fd,&attr256ogg.hash);
 #if 0
-  printf(" sha256: %s",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
+    printf(" hash_ogg_file returns %lld\n",(long long)count);
 #endif
-
-  if(attr256_state != CURRENT){
-    long long const count = hash_file(fd,statbuf,(attr256_state != CURRENT) ? attr256.hash : NULL);
-#if 0
-    printf(" hash_file returns %lld\n",count);
-#endif
-    if(count == -1)
-      return count;
-
-    // Write new attribute(s)
-    // We always write the more compact form, with 32 bits for the nanosecond count
-    if(attr256_state != CURRENT){
-      attr256.mtime = statbuf->st_mtim;
-      if(set_tag_256(fd,statbuf,&attr256) == -1){
-	assert(errno != ENOTSUP); // Already checked
-	return -1;
-      }
+    if(count == -1){
+      // Special tag for corrupt files to prevent continual rehashing
+      // and errorneous deduplication
+      memset(&attr256ogg.hash,0,SHA256_DIGEST_LENGTH);
     }
-    return count;
+    attr256ogg.mtime = statbuf->st_mtim;
+    set_tag_256(fd,statbuf,&attr256ogg,ATTR_NAME_256OGG); // check return?
   }
-  return 0;
+  return count;
 }
 
 // verify tags, if up to date
 int verify_tag_fd(int const fd,struct stat const *statbuf){
   assert(fd != -1);
 
-  struct stat sb;
+  struct stat sb = {0};
   if(statbuf == NULL){
     if(fstat(fd,&sb) == -1)
       return -1;
@@ -193,9 +226,9 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
   printf("verify_tag_fd(%d) inode %lld size %lld",fd,(long long int)statbuf->st_ino,(long long int)statbuf->st_size);
 #endif
   // Check status of SHA256 tag
-  struct attr256 attr256;
+  struct attr256 attr256 = {0};
   int attr256_state = MISSING;
-  int const r256 = getattr256(fd,&attr256);
+  int const r256 = getattr256(fd,&attr256,ATTR_NAME_256);
   assert(!(r256 == -1 && errno == ENOTSUP));
   if(r256 == 0){
     if(time_cmp(&attr256.mtime,&statbuf->st_mtim) == 0){
@@ -203,9 +236,9 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
     } else
       attr256_state = OLD;
   }
-    
+
 #if 0
-  printf(" sha256: %s,\n",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
+  printf("sha256: %s,\n",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
 #endif
 
   // Verify only current hashes; ignore old and missing ones
@@ -225,37 +258,39 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
   if(attr256_state == CURRENT && memcmp(attr256.hash,new_attr256.hash,sizeof(new_attr256.hash)) != 0){
     rval |= SHA256_MISMATCH;
   }
+  // Need to also verify sha256ogg hashes, if present *****
+
+
   return rval;
 }
 
-// Compute SHA256 hash of entire file already open with file descriptor fd
-long long hash_file(int const fd,struct stat const *statbuf,void * const sha256hash){
+// Compute conventional user.sha256 hash of entire file already open with file descriptor fd
+int64_t hash_file(int const fd,struct stat const *statbuf,void * const sha256hash){
   assert(fd != -1);
 
-  struct stat sb;
+  struct stat sb = {0};
   if(statbuf == NULL){
     if(fstat(fd,&sb) == -1)
       return -1;
     statbuf = &sb;
   }
-
   if(sha256hash == NULL)
     return 0; // Nothing to do!
-  
+
   // New EVP API used Aug 2025
   EVP_MD_CTX *ctx = EVP_MD_CTX_new();
   EVP_DigestInit_ex(ctx,EVP_sha256(),NULL);
-  
-  off_t remain = statbuf->st_size;
-  //  size_t chunksize = 512 * sysconf(_SC_PAGESIZE); // Matches a 2MB huge page on x86, might help
-  size_t chunksize = 1<<30;
-  assert(chunksize != 0); // Make sure page size doesn't return 0
-  long long count = 0;
 
-  for(off_t file_offset = 0;
+  int64_t remain = statbuf->st_size;
+  //  size_t chunksize = 512 * sysconf(_SC_PAGESIZE); // Matches a 2MB huge page on x86, might help
+  int64_t chunksize = 1<<30;
+  assert(chunksize != 0); // Make sure page size doesn't return 0
+  int64_t count = 0;
+
+  for(int64_t file_offset = 0;
       remain != 0;
       remain -= chunksize,file_offset += chunksize){
-      
+
     chunksize = chunksize > remain ? remain : chunksize;
 #ifndef MAP_HUGE_2MB
 #define MAP_HUGE_2MB (21 << MAP_HUGE_SHIFT)
@@ -268,7 +303,7 @@ long long hash_file(int const fd,struct stat const *statbuf,void * const sha256h
     //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
     madvise(p,chunksize,MADV_SEQUENTIAL); // hopefully will cause OS to read everything ahead
     EVP_DigestUpdate(ctx,p,chunksize);
-      
+
     int r = munmap(p,chunksize);
     assert(r != -1);
     count += chunksize;
@@ -276,6 +311,93 @@ long long hash_file(int const fd,struct stat const *statbuf,void * const sha256h
   EVP_DigestFinal_ex(ctx,sha256hash,NULL);
   EVP_MD_CTX_free(ctx);
   return count;
+}
+// Compute Ogg-special user.sha256ogg hash of entire ogg file already open with file descriptor fd
+// Ogg page headers are read and stream ID and CRC are zeroed before hashing so files
+// written separately will compare the same if their actual contents are the same
+int64_t hash_ogg_file(int const fd,void * const sha256hash){
+  if(fd == -1)
+    return -1;
+
+  if(sha256hash == NULL)
+    return -1; // Nothing to do!
+
+  if (lseek(fd, 0, SEEK_SET) == (off_t)-1)
+    return -1;
+
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  if(ctx == NULL)
+    return -1;
+
+  if(EVP_DigestInit_ex(ctx,EVP_sha256(),NULL) != 1){
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+  int const dfd = dup(fd); // fclose will close this
+  FILE *fp = fdopen(dfd,"rb");
+  if(fp == NULL){
+    close(dfd);
+    return -1;
+  }
+  // Process Ogg pages
+  int64_t count = 0;   // total byte count
+  uint8_t body[65536]; // Larger than possible body (255 * 255 = 65025)
+  while(true){
+    // Read page header
+    uint8_t hdr[27];
+
+    int len = fread(hdr, 1, sizeof hdr, fp);
+    if(len != sizeof hdr){
+      if(feof(fp))
+	break; // Clean EOF
+      goto bailout;
+    }
+    if (memcmp(hdr, "OggS", 4) != 0)
+      goto bailout;
+    if (hdr[4] != 0)
+      goto bailout;   // version 0 only
+
+    // Zero stream ID and CRC
+    hdr[14] = hdr[15] = hdr[16] = hdr[17] = 0;
+    hdr[22] = hdr[23] = hdr[24] = hdr[25] = 0;
+    // Hash censored header
+    if(EVP_DigestUpdate(ctx,&hdr,sizeof hdr) != 1)
+      goto bailout;
+    count += sizeof hdr;
+
+    uint8_t nseg = hdr[26];
+    if (nseg != 0){
+      uint8_t segtbl[255];
+      if(fread(segtbl, 1, nseg, fp) != nseg)
+	goto bailout;
+      if(EVP_DigestUpdate(ctx,segtbl,nseg) != 1)
+	goto bailout;
+      count += nseg;
+      int body_len = 0;
+      for (unsigned i = 0; i < nseg; i++)
+	body_len += segtbl[i];
+      if (body_len > 255u * 255u)
+	goto bailout;             // impossible for Ogg
+      if (body_len != 0) {
+	if (fread(body, 1, body_len, fp) != body_len)
+	  goto bailout;
+	if(EVP_DigestUpdate(ctx,body,body_len) != 1)
+	  goto bailout;
+	count += body_len;
+      }
+    }
+  }
+  if(EVP_DigestFinal_ex(ctx,sha256hash,NULL) != 1)
+    goto bailout;
+  EVP_MD_CTX_free(ctx);
+  rewind(fp);
+  fclose(fp);
+  return count;
+ bailout:
+  EVP_MD_CTX_free(ctx);
+  rewind(fp);
+  fclose(fp);
+  return -1;
 }
 
 // Convert hex-ascii string of arbitrary length to binary byte string
@@ -365,7 +487,7 @@ long long copyfile(char const *source,char const *target){
   // Preallocate space, if possible
   fallocate(fdo,0,(off_t)0,statbuf.st_size);
 #endif
-      
+
   // Copy file
   int len;
   while((len = read(fdi,buffer,BUFSIZ)) > 0){
@@ -406,7 +528,7 @@ long long copyfile(char const *source,char const *target){
   // Copy any extended attributes
   int tagsize = 16384;
   taglist = malloc(tagsize);
-  
+
   if((tagsize = FLISTXATTR(fdi,taglist,tagsize)) == -1 && errno == ERANGE){
     // Buffer for list of tags is too small, enlarge it and try again
     tagsize = FLISTXATTR(fdi,NULL,0); // get true size
@@ -434,9 +556,9 @@ long long copyfile(char const *source,char const *target){
 #endif
       }
     }
-    free(attval); attval = NULL;
+    FREE(attval);
   }
-  free(taglist); taglist = NULL;
+  FREE(taglist);
   // Copy ownership
   fchown(fdo,statbuf.st_uid,statbuf.st_gid);
 
@@ -456,7 +578,7 @@ int make_paths(char const *pathname,int mode){
     char * const cp = strrchr(workcopy,'/');
     if(cp == NULL){
       // pathname is in current directory, nothing to do
-      free(workcopy);
+      FREE(workcopy);
       return 0;
     }
     *cp = '\0'; // Leave just the directory prefix in workcopy
@@ -466,7 +588,7 @@ int make_paths(char const *pathname,int mode){
     struct stat statbuf;
     if(lstat(workcopy,&statbuf) == 0 && (statbuf.st_mode & S_IFMT) == S_IFDIR){
       // Everything appears honkey-dory
-      free(workcopy);
+      FREE(workcopy);
       return 0;
     }
   }
@@ -483,14 +605,14 @@ int make_paths(char const *pathname,int mode){
     if(lstat(workcopy,&statbuf) == -1){
       // try to make it
       if(mkdir(workcopy,mode) == -1){
-	free(workcopy);
+	FREE(workcopy);
 	return errno;
       }
     } else {
       // Stat succeeded; is it a directory?
       if((statbuf.st_mode & S_IFMT) != S_IFDIR){
 	// No - error!
-	free(workcopy);
+	FREE(workcopy);
 	return ENOTDIR;
       }
     }
@@ -498,7 +620,7 @@ int make_paths(char const *pathname,int mode){
     if(cp != NULL)
       *cp = '/';
   }
-  free(workcopy);
+  FREE(workcopy);
   return 0;
 }
 // Paranoid check to ensure the hash functions aren't broken
@@ -534,3 +656,93 @@ int sha256_selftest(void){
   return 0;
 }
 
+
+static uint32_t u32le(const unsigned char *p){
+    return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
+}
+
+static inline uint32_t ogg_crc32_update(uint32_t crc, const uint8_t *p, size_t n) {
+    while (n--) {
+        crc ^= (uint32_t)(*p++) << 24;              // feed MSB-first
+        for (int i = 0; i < 8; i++)
+            crc = (crc & 0x80000000U) ? ((crc << 1) ^ 0x04C11DB7U)
+                                      :  (crc << 1);
+    }
+    return crc;
+}
+
+bool is_ogg_file(int fd) {
+    uint8_t hdr[27];
+    uint8_t segtbl[255];
+    FILE *fp = NULL;
+    bool ok = false;
+
+    if (fd < 0)
+      return false;
+
+    int dupfd = dup(fd);                 // don’t consume caller’s fd
+    if (dupfd < 0)
+      return false;
+
+    fp = fdopen(dupfd, "rb");
+    if (!fp){
+      close(dupfd);
+      return false;
+    }
+    rewind(fp);
+
+    if (fread(hdr, 1, sizeof hdr, fp) != sizeof hdr){
+      goto done;
+    }
+    if (memcmp(hdr, "OggS", 4) != 0){
+      goto done;        // capture
+    }
+    if (hdr[4] != 0){
+      goto done;                        // version 0 only
+    }
+    uint8_t header_type = hdr[5];
+    if (!(header_type & 0x02)){
+      goto done;              // BOS must be set
+    }
+    if (header_type & 0x01){
+      goto done;                 // CONTINUED must be clear
+    }
+    uint8_t nseg = hdr[26];
+    if (nseg == 0){
+      goto done;                          // first page must carry at least id packet
+    }
+    if (fread(segtbl, 1, nseg, fp) != nseg){
+      goto done;
+    }
+    size_t body_len = 0;
+    uint8_t body[65536]; // longer than legal max
+    for (unsigned i = 0; i < nseg; i++)
+      body_len += segtbl[i];
+    if (body_len > 255u * 255u){
+      goto done;             // impossible for Ogg
+    }
+    if (body_len) {
+      if (fread(body, 1, body_len, fp) != body_len){
+	goto done;
+      }
+    }
+
+    // compute CRC over header (with crc field zeroed) + segtbl + body
+    uint8_t hdr_crc[27];
+    memcpy(hdr_crc, hdr, 27);
+    hdr_crc[22] = hdr_crc[23] = hdr_crc[24] = hdr_crc[25] = 0;
+
+    uint32_t crc = 0;
+    crc = ogg_crc32_update(crc,hdr_crc, 27);
+    crc = ogg_crc32_update(crc,segtbl, nseg);
+    crc = ogg_crc32_update(crc,body, body_len);
+
+    uint32_t stored = u32le(&hdr[22]);
+    ok = ((uint32_t)crc == stored);
+
+done:
+    rewind(fp);
+    if (fp)
+      fclose(fp);                 // also closes dupfd
+    return ok;
+}

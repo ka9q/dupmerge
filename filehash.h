@@ -1,5 +1,3 @@
-// $Id: filehash.h,v 1.14 2021/09/28 06:00:59 karn Exp karn $
-
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
@@ -9,6 +7,7 @@
 #endif
 #include <sys/stat.h>
 #include <openssl/sha.h>
+#include <stdbool.h>
 
 
 // BSD-based OSX uses an argument to control the following of symbolic links; Linux uses separate system calls
@@ -42,8 +41,10 @@
 // Linux requires all user-space external attributes to be explicitly prefixed with "user."
 #if __APPLE__
 #define ATTR_NAME_256 "sha256"
+#define ATTR_NAME_256OGG "sha256ogg"
 #else
 #define ATTR_NAME_256 "user.sha256"
+#define ATTR_NAME_256OGG "user.sha256ogg"
 #endif
 
 // Darwin (OSX) has this, but Linux apparently doesn't
@@ -60,26 +61,31 @@
 #define O_NOATIME (0)
 #endif
 
-enum tagstate { MISSING, OLD, CURRENT };
+// How the free() library routine should have been all along: null the pointer after freeing!
+#define FREE(p) (free(p), p = NULL)
+
+enum tagstate { MISSING, OLD, CURRENT, NOT_APPLICABLE };
 
 struct attr256 {
   struct timespec mtime;
-  unsigned char hash[SHA256_DIGEST_LENGTH];
+  uint8_t hash[SHA256_DIGEST_LENGTH];
 };
-
 
 #define SHA256_MISMATCH 2
 #define MISSING_TAGS 4
 
-int hextobinary(unsigned char *out,char const *in,int bytes);
-char *binarytohex(char *out,unsigned char const *in,int bytes);
+int hextobinary(uint8_t *out,char const *in,int bytes);
+char *binarytohex(char *out,uint8_t const *in,int bytes);
 long long copyfile(char const *source,char const *target);
 int make_paths(char const *pathname,int mode);
 int sha256_selftest(void);
 long long update_tag_fd(int fd,struct stat const *);
+long long update_ogg_tag_fd(int fd,struct stat const *statbuf);
 int verify_tag_fd(int fd,struct stat const *);
-long long hash_file(int fd,struct stat const *statbuf,void *sha256hash);
-int getattr256(int fd,struct attr256 *attr);
+int64_t hash_file(int fd,struct stat const *statbuf,void *sha256hash);
+int64_t hash_ogg_file(int fd,void *sha256hash);
+int getattr256(int fd,struct attr256 *attr,char const *name);
+bool is_ogg_file(int fd);
 
 // Compare two timespec structures
 static inline int time_cmp(struct timespec const *a,struct timespec const *b){

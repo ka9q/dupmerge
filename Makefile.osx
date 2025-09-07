@@ -11,16 +11,16 @@ rmdups: rmdups.o
 	$(CC) $(CFLAGS) -o rmdups rmdups.o
 
 construct: construct.o library.o
-	$(CC) $(CFLAGS) -o construct construct.o library.o -l crypto
+	$(CC) $(CFLAGS) -o construct construct.o library.o -lcrypto
 
 mergefiles: mergefiles.o
 	$(CC) $(CFLAGS) -o mergefiles mergefiles.o
 
 checkattr: checkattr.o library.o
-	$(CC) $(CFLAGS) -o checkattr checkattr.o library.o -l crypto
+	$(CC) $(CFLAGS) -o checkattr checkattr.o library.o -lcrypto -lz
 
 dupmerge: dupmerge.o library.o
-	$(CC) $(CFLAGS) -o dupmerge dupmerge.o library.o -l crypto
+	$(CC) $(CFLAGS) -o dupmerge dupmerge.o library.o -lcrypto -lz
 
 checkattr.o: checkattr.c filehash.h
 

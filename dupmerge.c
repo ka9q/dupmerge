@@ -1,4 +1,3 @@
-// $Id: dupmerge.c,v 1.7 2022/12/09 02:38:11 karn Exp $
 /* Dupmerge - Reclaim disk space by deleting redundant copies of files and
  * creating hardlinks in their place
 
@@ -30,6 +29,8 @@
 
  * Command line arguments:
  * -0 Delimit file names with nulls rather than newlines; for use with 'find -print0'
+ * -o Use special tag 'sha256ogg' computed on Ogg container files by first zeroing the Ogg streeam ID and checksim
+ *    so that Ogg files recorded separately on the same stream will compare the same
  * -q Operate in quiet mode (otherwise, relinks are displayed on stdout)
  * -f Fast (very fast) mode that bypasses an exhaustive file comparison in favor of modification timestamps.
  *    If the two files are the same size, have the same basename and exactly the same timestamp, they're probably the same.
@@ -63,6 +64,9 @@
  * Extra paranoia checks right before a pair of files is merged: if either file appears to have been modified since the
  * list was originally generated, dupmerge exits.
 
+ * Sept 2025: added -o (Ogg) option to compare Ogg (Opus) files written by different computers on the same Ogg/RTP/UDP
+ * stream but with different (random) stream IDs. Otherwise they'll always compare different even if they're identical
+
  * Trivia: this program was inspired by a cheating scandal in the introductory computer science course CS-100
  * at Cornell University the year after I graduated. The TAs simply sorted the projects by object code size and compared
  * those that were equal. That effectively found copies where only the variable names and comments had been changed.
@@ -92,6 +96,8 @@
 #include <signal.h>
 #include <ftw.h>
 #include <sys/xattr.h>
+#include <stdbool.h>
+
 
 #include "filehash.h"
 
@@ -121,15 +127,14 @@
 
 int Nopenfd = 100;
 
-enum flag { NO=0,YES=1,UNKNOWN=-1 };
-
-enum flag Fast_flag = NO;
-enum flag Zero_flag = NO;
-enum flag Quiet_flag = NO;
-enum flag Fast_threshold = 100000;
-enum flag No_do = NO;
-enum flag Small_first = NO;
-unsigned long long Minimum_size = 1; // 1 byte minimum
+bool Oggfiles = false;
+bool Fast_flag = false;
+bool Zero_flag = false;
+bool Quiet_flag = false;
+int64_t Fast_threshold = 100000;
+bool No_do = false;
+bool Small_first = false;
+int64_t Minimum_size = 1; // 1 byte minimum
 
 int Verbose;
 int Progress;
@@ -198,7 +203,7 @@ unsigned int Nfiles; // Actual number of entries in Entries[]
 
 void dump_files(void);
 void dump_entry(struct entry const *);
-int get_big_hash(struct entry *ep,struct stat const *);
+int get_file_hash(struct entry *ep,struct stat const *);
 // Our function that will handle each file in the hierarchy
 int process(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf);
 
@@ -215,8 +220,11 @@ int main(int argc,char *argv[]){
 
   // Process command line args
   int c;
-  while((c = getopt(argc,argv,"snqf0t:L:vm:")) != EOF){
+  while((c = getopt(argc,argv,"snqf0t:L:vm:o")) != EOF){
     switch(c){
+    case 'o':
+      Oggfiles = true;
+      break;
     case 'm':
       Minimum_size = strtoll(optarg,NULL,0);
       break;
@@ -227,22 +235,22 @@ int main(int argc,char *argv[]){
       locale_string = optarg;
       break;
     case 's':
-      Small_first = YES;
+      Small_first = true;
       break;
     case 'n':
-      No_do = YES;
+      No_do = true;
       break;
     case 'q':
-      Quiet_flag = YES;
+      Quiet_flag = true;
       break;
     case 'f':
-      Fast_flag = YES; /* Just compare modification timestamps, not file contents */
+      Fast_flag = true; /* Just compare modification timestamps, not file contents */
       break;
     case '0':
-      Zero_flag = YES; /* Path names are delimited by nulls, e.g., from 'find . -print0' */
+      Zero_flag = true; /* Path names are delimited by nulls, e.g., from 'find . -print0' */
       break;
     case 't':
-      Fast_threshold = atoi(optarg);
+      Fast_threshold = strtoll(optarg,NULL,0);
       break;
     case 'v':
       Verbose++;
@@ -254,7 +262,7 @@ int main(int argc,char *argv[]){
 
   if(No_do && Quiet_flag){
     printf("%s: -q flag forced off with -n set\n",Program_name);
-    Quiet_flag = NO; /* Force off */
+    Quiet_flag = false; /* Force off */
   }
   // Catch signals so we can show statistics if the user hits ^C
   signal(SIGHUP,sig_handler);
@@ -366,8 +374,7 @@ int main(int argc,char *argv[]){
 	    Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev &&
 	    Entries[i].statbuf.st_ino == Entries[j].statbuf.st_ino; j++){
 	// Already hard linked, remove from list
-	free(Entries[j].pathname);
-	Entries[j].pathname = NULL;
+	FREE(Entries[j].pathname);
 	Extra_links++;
       }
       // Skip any more files with the same size on the same device
@@ -387,7 +394,7 @@ int main(int argc,char *argv[]){
       printf("%s: list resorted, %'u entries left\n",Program_name,Nfiles);
     
     if(Nfiles < 2){
-      free(Entries);
+      FREE(Entries);
       exit(0);
     }
   }
@@ -403,8 +410,7 @@ int main(int argc,char *argv[]){
       }
       if(j == i+1){
 	// Unique size on this device, remove from list
-	free(Entries[i].pathname);
-	Entries[i].pathname = NULL;
+	FREE(Entries[i].pathname);
 	Unique_sizes++;
       }
     }
@@ -419,7 +425,7 @@ int main(int argc,char *argv[]){
       printf("%s: list resorted, %'u entries left\n",Program_name,Nfiles);
     
     if(Nfiles < 2){
-      free(Entries);
+      FREE(Entries);
       exit(0);
     }
   }    
@@ -448,8 +454,7 @@ int main(int argc,char *argv[]){
       if(Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev
 	 && Entries[i].statbuf.st_ino == Entries[j].statbuf.st_ino){
 	// Existing hard link to reference file; mark so we'll skip over it later
-	free(Entries[j].pathname);
-	Entries[j].pathname = NULL;
+	FREE(Entries[j].pathname);
 	continue;
       }
       if(comparison_equal(&Entries[i],&Entries[j]) == 0){
@@ -504,15 +509,14 @@ int main(int argc,char *argv[]){
 	  }
 	}
 	// Don't use this entry as a reference file later
-	free(Entries[j].pathname);
-	Entries[j].pathname = NULL;
+	FREE(Entries[j].pathname);
 	Unlinks++;
       } // if same
     } // End of inner for() loop
   } // end of for loop looking ahead for match with file i
  done:;
   print_stats();
-  free(Entries);  // Not really necessary since we're exiting
+  FREE(Entries);  // Not really necessary since we're exiting
   exit(0);
 }
 
@@ -725,10 +729,21 @@ int comparison_equal(const void *ap,const void *bp){
   }
 
   // compare full file hashes
-  get_big_hash(a,&a->statbuf);
-  get_big_hash(b,&b->statbuf);
+  get_file_hash(a,&a->statbuf);
+  get_file_hash(b,&b->statbuf);
   
-  int const i = memcmp(a->attr256.hash,b->attr256.hash,sizeof(a->attr256.hash));
+  // A hash of all zeroes is a special (and otherwise very unlikely!) value that means
+  // "this Ogg file is corrupt". It's not the same as any other hash, so don't deduplicate it and
+  // don't recompute it unless out of date
+  uint8_t zeroes[SHA256_DIGEST_LENGTH] = {0};
+  int i = 0;
+  if(memcmp(a->attr256.hash,zeroes,sizeof(a->attr256.hash)) == 0){
+    i = 1;
+  } else if(memcmp(b->attr256.hash,zeroes,sizeof(a->attr256.hash)) == 0){
+    i = -1;
+  } else {
+    i = memcmp(a->attr256.hash,b->attr256.hash,sizeof(a->attr256.hash));
+  }
   if(i != 0)
     Hash_fail++;
 
@@ -762,15 +777,8 @@ int compare_inodes(const void *ap,const void *bp){
 
 
 // Fill in the filehash[] field in the file entry structure
-// We can get it from three places:
-// 1. If the small hash is available and the file is not larger than Small_hash_size (default 4kiB = 1 page on the x86),
-//    then we can just copy it over
-// 2. The hash can be cached from a previous run in the user.sha1 extended attribute on the file. Not all filesytems support
-//    extended attributes; I developed this specifically for XFS
-// 3. Last but not least, we can compute the full file hash ourselves
-//   
-// In cases 1 & 3 we'll store the hash to the user.sha1 for future use
-int get_big_hash(struct entry *ep,struct stat const *statbuf){
+// We look for it in the extended attribute, (re)computing it if it's missing or out of date
+int get_file_hash(struct entry *ep,struct stat const *statbuf){
   if(ep->attr_present)
     return 0;
   int rval = 0;
@@ -781,23 +789,46 @@ int get_big_hash(struct entry *ep,struct stat const *statbuf){
       printf("Can't read %s: %s\n",ep->pathname,strerror(errno));
     goto done;
   }
-  // Ensure tag is present and up to date
-  long long const r = update_tag_fd(fd,statbuf);
-  if(r < 0){
-    rval = -1;
-    if(Verbose)
-      printf("update_tag_fd(%s) failed:%s\n",ep->pathname,strerror(errno));
-    goto done;
-  }
-  if(r > 0)
-    Hashes_computed++;
+  if(Oggfiles && is_ogg_file(fd)){
+    // Ensure tag is present and up to date
+    long long const r = update_ogg_tag_fd(fd,statbuf);
+    if(r < 0){
+      rval = -1;
+      if(Verbose)
+	printf("update_ogg_tag_fd(%s) failed:%s\n",ep->pathname,strerror(errno));
+      goto done;
+    }
+    if(r > 0)
+      Hashes_computed++;
 
-  if(getattr256(fd,&ep->attr256) == -1){
-    rval = -1;
-    if(Verbose)
-      printf("%s: error getting attribute: %s\n",ep->pathname,
-	      strerror(errno));
-    goto done;
+    if(getattr256(fd,&ep->attr256,ATTR_NAME_256OGG) == -1){
+      rval = -1;
+      if(Verbose)
+	printf("%s: error getting attribute %s: %s\n",ep->pathname,ATTR_NAME_256OGG,
+	       strerror(errno));
+      goto done;
+    }
+  } else {
+    // Ensure tag is present and up to date
+    // If it's not an ogg file we'll use this one. It'll never match
+    // another file's ogg hash anyway
+    long long const r = update_tag_fd(fd,statbuf);
+    if(r < 0){
+      rval = -1;
+      if(Verbose)
+	printf("update_tag_fd(%s) failed:%s\n",ep->pathname,strerror(errno));
+      goto done;
+    }
+    if(r > 0)
+      Hashes_computed++;
+
+    if(getattr256(fd,&ep->attr256,ATTR_NAME_256) == -1){
+      rval = -1;
+      if(Verbose)
+	printf("%s: error getting attribute %s: %s\n",ep->pathname,ATTR_NAME_256,
+	       strerror(errno));
+      goto done;
+    }
   }
   Hashes_fetched++;
   ep->attr_present = 1;

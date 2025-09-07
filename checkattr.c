@@ -37,6 +37,7 @@
 #include <signal.h>
 #include <time.h>
 #include <utime.h>
+#include <stdbool.h>
 
 #include "filehash.h"
 
@@ -64,12 +65,15 @@
 int Nopenfd = 100;
 
 // Command-line options and flags, with defaults
-int Zero_flag; // Interpret '\0' as delimiter on file names read from stdin
+bool Zero_flag; // Interpret '\0' as delimiter on file names read from stdin
 int Check_tags; // Verify correctness of all existing, up-to-date tags
-int Quiet; // Be very quiet except for fatal errors
+bool Quiet; // Be very quiet except for fatal errors
+bool Do_oggfiles;
+int Verbose;
 
 // Statistics counters
 // Counts of file types seen
+unsigned long long Ogg_files;
 unsigned long long Regular_files;
 unsigned long long FIFO;
 unsigned long long Character_special;
@@ -111,8 +115,7 @@ void print_stats(void);
 // Our function that will handle each file in the hierarchy
 int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf);
 
-int Verbose;
-int Quiet;
+
 
 int main(int argc,char *argv[]){
   char const *locale_string = "en_US.UTF-8";
@@ -128,10 +131,13 @@ int main(int argc,char *argv[]){
 
   /* Process command line args */
   int c;
-  while((c = getopt(argc,argv,"vcL:0qx")) != EOF){
+  while((c = getopt(argc,argv,"vcL:0qxo")) != EOF){
     switch(c){
+    case 'o':
+      Do_oggfiles = true;
+      break;
     case 'q':
-      Quiet++;
+      Quiet = true;
       break;
     case 'x':
       nftw_flags |= FTW_MOUNT; // Don't cross mount points
@@ -146,7 +152,7 @@ int main(int argc,char *argv[]){
       locale_string = optarg;
       break;
     case '0':
-      Zero_flag++; /* Path names are delimited by nulls, e.g., from 'find . -print0' */
+      Zero_flag = true; /* Path names are delimited by nulls, e.g., from 'find . -print0' */
       break;
     default:
       printf("Usage: %s [-v] [-0] [-q] [-c] [-x] [-L locale]",Program_name);
@@ -307,24 +313,21 @@ int main(int argc,char *argv[]){
 
 
 // Process a path name
-// Return codes:
-//  0: normal
 int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf){
   Total_files++;
-  int retval = FTW_CONTINUE;
 
   /* Ignore null path names */
   if(pathname == NULL || strlen(pathname) == 0){
     Null_pathname++;
     if(Verbose > 1)
       printf("null pathname\n");
-    goto done;
+    return FTW_CONTINUE;
   }
   if(statbuf == NULL || typeflag == FTW_NS){
     Stat_fails++;
     if(Verbose)
       printf("process_file stat(%s) failed: %s\n",pathname,strerror(errno));
-    goto done; // Stat() failed, no analysis possible
+    return FTW_CONTINUE; // Stat() failed, no analysis possible
   }
   // Count file types
   switch(statbuf->st_mode & S_IFMT){
@@ -372,70 +375,89 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
     break;
   case S_IFREG:
     Regular_files++;
-    // Process only regular files; symbolic links could be tagged but is that useful?
-    if(statbuf->st_blocks == 0 || statbuf->st_size == 0){
-      // Ignore empty files and files with no assigned data blocks (any data being stored in the inode).
-      if(Verbose > 1)
-	printf("%s empty regular file\n",pathname);
-      Empty++;
-      break;
-    }
-    Files_checked++;
-    Total_bytes += statbuf->st_size;
 
-    // Maintaining an open file descriptor is probably more efficient than invoking multiple system calls with the same path name 
-    // Note that you can change the external tags of a file open read-only, but you need
-    // write permission on the file itself.
-    // The O_NOATIME flag is restricted to root or the owner of the file
-    int flags = O_RDONLY;
-    if(User_id == 0 || User_id == statbuf->st_uid)
-      flags |= O_NOATIME;
-
-    int const fd = open(pathname,flags);
-    if(fd == -1){
-      if(errno == EPERM || errno == EACCES)
-	Perm_denied++;
-      Open_fails++;
-      if(Verbose){
-	printf("Can't read %s: %s\n",pathname,strerror(errno));
-      }
-    } else if(Check_tags){
-      int const r = verify_tag_fd(fd,statbuf);
-      if(r == -1){
-	if(Verbose)
-	  printf("%s: verify_tag_fd error; %s\n",pathname,strerror(errno));
-      } else {
-	if(r & SHA256_MISMATCH){
-	  SHA256_fails++;
-	  printf("SHA256 mismatch: %s\n",pathname);      
-	}
-	if(r & MISSING_TAGS){
-	  Missing_tag++;
-	}
-      }
-    } else {
-      if(flock(fd,LOCK_EX|LOCK_NB) == -1){
-	if(Verbose > 1)
-	  printf("Skipping %s\n",pathname);
-      } else {
-	long long const r = update_tag_fd(fd,statbuf);
-	flock(fd,LOCK_UN);
-	if(Verbose && r > 0)
-	  printf("Updated %s\n",pathname);
-	if(r == -1){
-	  printf("%s: update_tag_fd error; %s\n",pathname,strerror(errno));
-	} else if(r > 0){
-	  Bytes_hashed += r;
-	  Files_hashed++;
-	}
-      }
-    }
-    if(fd != -1)
-      close(fd);
     break;
   }
- done:;
-  return retval;
+  // Process only regular files; symbolic links could be tagged but is that useful?
+  if((statbuf->st_mode & S_IFMT) != S_IFREG)
+    return FTW_CONTINUE;
+
+  if(statbuf->st_blocks == 0 || statbuf->st_size == 0){
+    // Ignore empty files and files with no assigned data blocks (any data being stored in the inode).
+    if(Verbose > 1)
+      printf("%s empty regular file\n",pathname);
+    Empty++;
+    return FTW_CONTINUE;
+  }
+  Files_checked++;
+  Total_bytes += statbuf->st_size;
+
+  // Maintaining an open file descriptor is probably more efficient than invoking multiple system calls with the same path name 
+  // Note that you can change the external tags of a file open read-only, but you need
+  // write permission on the file itself.
+  // The O_NOATIME flag is restricted to root or the owner of the file
+  int flags = O_RDONLY;
+  if(User_id == 0 || User_id == statbuf->st_uid)
+    flags |= O_NOATIME;
+  
+  int const fd = open(pathname,flags);
+  if(fd == -1){
+    if(errno == EPERM || errno == EACCES)
+      Perm_denied++;
+    Open_fails++;
+    if(Verbose)
+      printf("Can't read %s: %s\n",pathname,strerror(errno));
+    return FTW_CONTINUE;
+  }
+  if(Check_tags){
+    int const r = verify_tag_fd(fd,statbuf);
+    if(r == -1){
+      if(Verbose)
+	printf("%s: verify_tag_fd error; %s\n",pathname,strerror(errno));
+    } else {
+      if(r & SHA256_MISMATCH){
+	SHA256_fails++;
+	printf("SHA256 mismatch: %s\n",pathname);      
+      }
+      if(r & MISSING_TAGS)
+	Missing_tag++;
+    }
+    close(fd);
+    return FTW_CONTINUE;
+  }
+  // Update tags, if necessary
+  if(flock(fd,LOCK_EX|LOCK_NB) == -1){
+    // Lock failed, another copy of us is probably here
+    if(Verbose > 1)
+      printf("Skipping %s: %s\n",pathname,strerror(errno));
+    close(fd);
+    return FTW_CONTINUE;
+  }
+  long long r = update_tag_fd(fd,statbuf);
+  if(Verbose && r > 0)
+    printf("Updated %s\n",pathname);
+  if(r == -1){
+    printf("%s: update_tag_fd error; %s\n",pathname,strerror(errno));
+  } else if(r > 0){
+    Bytes_hashed += r;
+    Files_hashed++;
+  }
+  if(Do_oggfiles && is_ogg_file(fd)){
+    Ogg_files++;
+    // Additionally update sha256ogg header for Ogg (Opus) files
+    r = update_ogg_tag_fd(fd,statbuf);
+    if(Verbose && r > 0)
+      printf("Updated ogg %s\n",pathname);
+    if(r == -1){
+      printf("%s: update_tag_fd error; %s\n",pathname,strerror(errno));
+    } else if(r > 0){
+      Bytes_hashed += r;
+      Files_hashed++;
+    }
+  }
+  flock(fd,LOCK_UN);
+  close(fd);
+  return FTW_CONTINUE;
 }
 
 #if __APPLE__
@@ -479,6 +501,8 @@ void print_stats(void){
 
   if(Regular_files)
     printf("Regular files: %'llu\n",Regular_files);
+  if(Ogg_files)
+    printf("Ogg files: %'llu\n",Ogg_files);    
 
   if(Null_pathname)
     printf("Null pathnames: %'llu\n",Null_pathname);
