@@ -449,7 +449,7 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
     if(Verbose && r > 0)
       printf("Updated ogg %s\n",pathname);
     if(r == -1){
-      printf("%s: update_tag_fd error; %s\n",pathname,strerror(errno));
+      printf("%s: update_ogg_tag_fd error; %s\n",pathname,strerror(errno));
     } else if(r > 0){
       Bytes_hashed += r;
       Files_hashed++;
