@@ -264,19 +264,26 @@ int verify_tag_fd(int const fd,struct stat const *statbuf){
 // Compute conventional user.sha256 hash of entire file already open with file descriptor fd
 int64_t hash_file(int const fd,struct stat const *statbuf,void * const sha256hash){
   assert(fd != -1);
-
+  if(fd == -1){
+    errno = EBADF;
+    return -1;
+  }
   struct stat sb = {0};
   if(statbuf == NULL){
     if(fstat(fd,&sb) == -1)
       return -1;
     statbuf = &sb;
   }
-  if(sha256hash == NULL)
-    return 0; // Nothing to do!
+  if(sha256hash == NULL){
+    errno = EINVAL;
+    return -1;
+  }
 
   // New EVP API used Aug 2025
   EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-  EVP_DigestInit_ex(ctx,EVP_sha256(),NULL);
+  assert(ctx != NULL);
+  int r = EVP_DigestInit_ex(ctx,EVP_sha256(),NULL);
+  assert(r == 1);
 
   int64_t remain = statbuf->st_size;
   //  size_t chunksize = 512 * sysconf(_SC_PAGESIZE); // Matches a 2MB huge page on x86, might help
@@ -299,13 +306,15 @@ int64_t hash_file(int const fd,struct stat const *statbuf,void * const sha256has
     //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
     //    madvise(p,chunksize,MADV_SEQUENTIAL|MADV_WILLNEED); // hopefully will cause OS to read everything ahead
     madvise(p,chunksize,MADV_SEQUENTIAL); // hopefully will cause OS to read everything ahead
-    EVP_DigestUpdate(ctx,p,chunksize);
+    int r = EVP_DigestUpdate(ctx,p,chunksize);
+    assert(r == 1);
 
-    int r = munmap(p,chunksize);
+    r = munmap(p,chunksize);
     assert(r != -1);
     count += chunksize;
   }
-  EVP_DigestFinal_ex(ctx,sha256hash,NULL);
+  r = EVP_DigestFinal_ex(ctx,sha256hash,NULL);
+  assert(r == 1);
   EVP_MD_CTX_free(ctx);
   return count;
 }
@@ -313,27 +322,32 @@ int64_t hash_file(int const fd,struct stat const *statbuf,void * const sha256has
 // Ogg page headers are read and stream ID and CRC are zeroed before hashing so files
 // written separately will compare the same if their actual contents are the same
 int64_t hash_ogg_file(int const fd,void * const sha256hash){
-  if(fd == -1)
-    return -1;
-
-  if(sha256hash == NULL)
-    return -1; // Nothing to do!
-
-  if (lseek(fd, 0, SEEK_SET) == (off_t)-1)
-    return -1;
-
-  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-  if(ctx == NULL)
-    return -1;
-
-  if(EVP_DigestInit_ex(ctx,EVP_sha256(),NULL) != 1){
-    EVP_MD_CTX_free(ctx);
+  if(fd == -1){
+    errno = EBADF;
     return -1;
   }
+  if(sha256hash == NULL){
+    errno = EINVAL;
+    return -1; // Nothing to do!
+  }
+  if (lseek(fd, 0, SEEK_SET) == (off_t)-1){
+    errno = ESPIPE;
+    assert(false);
+    return -1;
+  }
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  assert(ctx != NULL);
+
+  int r = EVP_DigestInit_ex(ctx,EVP_sha256(),NULL);
+  assert(r == 1);
+
   int const dfd = dup(fd); // fclose will close this
   FILE *fp = fdopen(dfd,"rb");
   if(fp == NULL){
+    int esave = errno;
     close(dfd);
+    EVP_MD_CTX_free(ctx);
+    errno = esave;
     return -1;
   }
   // Process Ogg pages
@@ -344,57 +358,54 @@ int64_t hash_ogg_file(int const fd,void * const sha256hash){
     uint8_t hdr[27];
 
     int len = fread(hdr, 1, sizeof hdr, fp);
-    if(len != sizeof hdr){
-      if(feof(fp))
-	break; // Clean EOF
-      goto bailout;
-    }
+    if(len != sizeof hdr)
+      break;
     if (memcmp(hdr, "OggS", 4) != 0)
-      goto bailout;
+      break;
     if (hdr[4] != 0)
-      goto bailout;   // version 0 only
+      break;
 
     // Zero stream ID and CRC
     hdr[14] = hdr[15] = hdr[16] = hdr[17] = 0;
     hdr[22] = hdr[23] = hdr[24] = hdr[25] = 0;
     // Hash censored header
-    if(EVP_DigestUpdate(ctx,&hdr,sizeof hdr) != 1)
-      goto bailout;
+    int r = EVP_DigestUpdate(ctx,&hdr,sizeof hdr);
+    assert(r == 1);
+
     count += sizeof hdr;
 
     uint8_t nseg = hdr[26];
     if (nseg != 0){
       uint8_t segtbl[255];
       if(fread(segtbl, 1, nseg, fp) != nseg)
-	goto bailout;
-      if(EVP_DigestUpdate(ctx,segtbl,nseg) != 1)
-	goto bailout;
+	break;
+
+      int r = EVP_DigestUpdate(ctx,segtbl,nseg);
+      assert(r == 1);
+
       count += nseg;
       int body_len = 0;
       for (unsigned i = 0; i < nseg; i++)
 	body_len += segtbl[i];
       if (body_len > 255u * 255u)
-	goto bailout;             // impossible for Ogg
+	break;             // impossible, not sure why I'm testing for it
+
       if (body_len != 0) {
 	if (fread(body, 1, body_len, fp) != body_len)
-	  goto bailout;
-	if(EVP_DigestUpdate(ctx,body,body_len) != 1)
-	  goto bailout;
+	  break;
+
+	int r = EVP_DigestUpdate(ctx,body,body_len);
+	assert(r == 1);
 	count += body_len;
       }
     }
   }
-  if(EVP_DigestFinal_ex(ctx,sha256hash,NULL) != 1)
-    goto bailout;
+  r = EVP_DigestFinal_ex(ctx,sha256hash,NULL);
+  assert(r == 1);
   EVP_MD_CTX_free(ctx);
   rewind(fp);
   fclose(fp);
   return count;
- bailout:
-  EVP_MD_CTX_free(ctx);
-  rewind(fp);
-  fclose(fp);
-  return -1;
 }
 
 // Convert hex-ascii string of arbitrary length to binary byte string
