@@ -98,7 +98,6 @@
 #include <sys/xattr.h>
 #include <stdbool.h>
 
-
 #include "filehash.h"
 
 // BSD-based OSX uses an argument to control the following of symbolic links; Linux uses separate system calls
@@ -185,7 +184,7 @@ struct entry {
   char *pathname; // Path name, reserved space for null
   struct stat statbuf; // file i-node data
   struct attr256 attr256;
-  int attr_present;
+  bool attr_present;
 };
 
 void print_stats(void);
@@ -831,7 +830,7 @@ int get_file_hash(struct entry *ep,struct stat const *statbuf){
     }
   }
   Hashes_fetched++;
-  ep->attr_present = 1;
+  ep->attr_present = true;
  done:;
   if(fd != -1)
     close(fd);
