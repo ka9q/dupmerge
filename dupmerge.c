@@ -788,6 +788,10 @@ int get_file_hash(struct entry *ep,struct stat const *statbuf){
       printf("Can't read %s: %s\n",ep->pathname,strerror(errno));
     goto done;
   }
+#if TRACE
+  printf("%s:\n",ep->pathname);
+#endif
+
   if(Oggfiles && is_ogg_file(fd)){
     // Ensure tag is present and up to date
     long long const r = update_ogg_tag_fd(fd,statbuf);

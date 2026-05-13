@@ -18,7 +18,7 @@ APPS= dupmerge checkattr mergefiles
 
 CPPFLAGS ?=
 LDFLAGS  ?=
-LDLIBS   ?= -lcrypto -lz
+LDLIBS   ?=
 
 ifeq ($(UNAME_S),Darwin)
   CPPFLAGS += -I/opt/local/include
@@ -37,6 +37,11 @@ endif
 ifdef SANITIZE
      DOPTS += -fsanitize=address -fsanitize=undefined
      LDOPTS = -fsanitize=address -fsanitize=undefined
+endif
+
+ifeq ($(TRACE),)
+else
+	DOPTS += -DTRACE=1
 endif
 
 ARCHOPTS =
@@ -58,10 +63,10 @@ mergefiles: mergefiles.o
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 checkattr: checkattr.o ogghash.o library.o
-	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) -logg -lcrypto $(LDLIBS)
 
 dupmerge: dupmerge.o ogghash.o library.o
-	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) -logg -lcrypto $(LDLIBS)
 
 checkattr.o: checkattr.c filehash.h
 

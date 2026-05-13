@@ -31,6 +31,7 @@
 #include <string.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <ogg/ogg.h>
 
 #include "filehash.h"
 
@@ -59,6 +60,10 @@ long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
     } else
       attr256ogg_state = OLD;
   }
+#if TRACE
+    printf("oggsha256: %s\n",attr256ogg_state == CURRENT ? "current" : attr256ogg_state == OLD ? "old" : "missing");
+#endif
+
   if(attr256ogg_state != CURRENT){
     count = hash_ogg_file(fd,&attr256ogg.hash);
 #if TRACE
@@ -108,69 +113,70 @@ int64_t hash_ogg_file(int const fd,void * const sha256hash){
     errno = esave;
     return -1;
   }
-  // Process Ogg pages
-  int64_t byte_count = 0;   // total byte count
-  while(true){
-    // Read page header
-    uint8_t hdr[27];
+#define OGG_BUFSZ 4096
 
-    int const len = fread(hdr, 1, sizeof hdr, fp);
-    if(len != sizeof hdr)
-      break;
-    if (memcmp(hdr, "OggS", 4) != 0)
-      break;
-    if (hdr[4] != 0)
-      break;
+  ogg_sync_state oy = {0};
+  ogg_stream_state os = {0};
+  ogg_page og = {0};
+  ogg_packet op = {0};
 
-    // Zero stream ID and CRC
-    hdr[14] = hdr[15] = hdr[16] = hdr[17] = 0;
-    hdr[22] = hdr[23] = hdr[24] = hdr[25] = 0;
-    // Hash censored header
-    {
-      int const r = EVP_DigestUpdate(ctx,&hdr,sizeof hdr);
-      (void)r;
-      assert(r == 1);
-    }
-    byte_count += sizeof hdr;
+  bool stream_initialized = false;
+  int packet_index = 0;
 
-    uint8_t const nseg = hdr[26];
-    if (nseg != 0){
-      uint8_t segtbl[255];
-      if(fread(segtbl, 1, nseg, fp) != nseg)
-	break;
-      {
-	int const r = EVP_DigestUpdate(ctx,segtbl,nseg);
-	(void)r;
-	assert(r == 1);
+  ogg_sync_init(&oy);
+
+  int64_t byte_count = 0;
+  for (;;) {
+    char *buf = ogg_sync_buffer(&oy, OGG_BUFSZ);
+    size_t n = fread(buf, 1, OGG_BUFSZ, fp);
+
+    ogg_sync_wrote(&oy, n);
+
+    while (ogg_sync_pageout(&oy, &og) == 1) {
+      if (!stream_initialized) {
+	int serial = ogg_page_serialno(&og);
+	ogg_stream_init(&os, serial);
+	stream_initialized = true;
       }
-      byte_count += nseg;
-      unsigned int body_len = 0;
-      for (unsigned i = 0; i < nseg; i++)
-	body_len += segtbl[i];
-      if (body_len > 255u * 255u)
-	break;             // impossible, not sure why I'm testing for it
-
-      if (body_len != 0) {
-	uint8_t body[body_len]; // Larger than possible body (255 * 255 = 65025)
-	if (fread(body, 1, body_len, fp) != body_len)
-	  break;
-	{
-	  int const r = EVP_DigestUpdate(ctx,body,body_len);
-	  (void)r;
-	  assert(r == 1);
+      ogg_stream_pagein(&os, &og);
+      while (ogg_stream_packetout(&os, &op) == 1) {
+	if (packet_index == 0) {
+	  if (op.bytes < 8 || memcmp(op.packet, "OpusHead", 8) != 0) {
+	    fprintf(stderr, "not OpusHead\n");
+	    byte_count = -1;
+	    goto done;
+	  }
+	} else if (packet_index == 1) {
+	  if (op.bytes < 8 || memcmp(op.packet, "OpusTags", 8) != 0) {
+	    fprintf(stderr, "not OpusTags\n");
+	    byte_count = -1;
+	    goto done;
+	  }
+	} else {
+	  // This is one encoded Opus packet.
+	  EVP_DigestUpdate(ctx,op.packet, op.bytes);
+	  byte_count += op.bytes;
 	}
-	byte_count += body_len;
+	packet_index++;
       }
+    }
+    if (n == 0)
+      break; // EOF
+
+    if (ferror(fp)){
+      byte_count = -1;
+      break;
     }
   }
-  int const r = EVP_DigestFinal_ex(ctx,sha256hash,NULL);
-  (void)r;
-  assert(r == 1);
-  EVP_MD_CTX_free(ctx);
-  rewind(fp);
-  fclose(fp);
-  return byte_count;
-}
+  done:;
+    if (stream_initialized)
+      ogg_stream_clear(&os);
+    ogg_sync_clear(&oy);
+    EVP_DigestFinal_ex(ctx,sha256hash,NULL);
+    EVP_MD_CTX_free(ctx);
+    fclose(fp);
+    return byte_count;
+  }
 
 static inline uint32_t ogg_crc32_update(uint32_t crc, uint8_t const *p, size_t n) {
   while (n--) {

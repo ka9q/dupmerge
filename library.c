@@ -147,7 +147,7 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
 	attr256_state = OLD;
     }
 #if TRACE
-    printf("sha256: %s",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
+    printf("sha256: %s\n",attr256_state == CURRENT ? "current" : attr256_state == OLD ? "old" : "missing");
 #endif
     if(attr256_state == OLD || attr256_state == MISSING){
       count = hash_file(fd,statbuf,&attr256.hash);
