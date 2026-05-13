@@ -108,17 +108,15 @@ char const *Program_name; // Points to argv[0], for benefit of subroutines gener
 
 void sig_handler(int);
 void alarm_handler(int sig);
-int update_reg_file(const char *,const struct stat *);
-int verify_reg_file(const char *,const struct stat *);
+int update_reg_file(char const *, struct stat const *);
+int verify_reg_file(char const *, struct stat const *);
 void print_stats(void);
 
 // Our function that will handle each file in the hierarchy
 int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf);
 
-
-
 int main(int argc,char *argv[]){
-  char const *locale_string = "en_US.UTF-8";
+  char const *locale_string = getenv("$LANG");
 
   Program_name = argv[0];
   User_id = geteuid();
@@ -159,12 +157,10 @@ int main(int argc,char *argv[]){
       break;
     }
   }
-
   if(Check_tags && Verbose)
     printf("Verifying hash tags, this can take some time\n");
   if(NULL == setlocale(LC_NUMERIC,locale_string))
     printf("setlocale %s failed\n",locale_string);
-
 
   // Catch signals so we can show statistics if the user hits ^C
   {
@@ -190,7 +186,7 @@ int main(int argc,char *argv[]){
 
   struct sigaction act;
   void action(int,siginfo_t *,void *);
-  
+
   //  act.sa_mask = NULL;
   act.sa_flags = SA_SIGINFO;
   act.sa_sigaction = action;
@@ -217,11 +213,10 @@ int main(int argc,char *argv[]){
   // Dereference symbolic links only here, not in subdirectories
   if(optind < argc){
     for(int i=optind;i<argc;i++){
-      struct stat statbuf;
-
       if(strlen(argv[i]) >= PATH_MAX)
 	continue;
-      
+
+      struct stat statbuf;
       if(lstat(argv[i],&statbuf) == -1){
 	if(errno == EPERM)
 	  Perm_denied++;
@@ -229,13 +224,14 @@ int main(int argc,char *argv[]){
       } else if((statbuf.st_mode & S_IFMT) == S_IFLNK){
 	// Dereference symbolic link
 	char link_target[PATH_MAX];
-	int linklen;
-	if((linklen = readlink(argv[i],link_target,sizeof(link_target))) == -1){
+	ssize_t const r = readlink(argv[i],link_target,sizeof link_target);
+	if(r < 0){
 	  if(errno == EPERM)
 	    Perm_denied++;
 	  printf("can't readlink(%s): %s\n",link_target,strerror(errno));
 	} else {
-	  if(linklen < sizeof(link_target))
+	  unsigned const linklen = r;
+	  if(linklen < sizeof link_target)
 	    link_target[linklen] = '\0';
 	  if(stat(link_target,&statbuf) == -1){
 	    printf("link target stat(%s) failed: %s\n",link_target,strerror(errno));
@@ -245,7 +241,7 @@ int main(int argc,char *argv[]){
 	    int r;
 	    if((r = nftw(link_target,process_file,Nopenfd,nftw_flags)) != 0){
 	      printf("ntfw(%s) returns %d\n",argv[i],r);
-	    }	    
+	    }
 	  }
 	}
       } else if((statbuf.st_mode & S_IFMT) == S_IFREG){
@@ -265,13 +261,13 @@ int main(int argc,char *argv[]){
     while(!feof(stdin)){
       int ll;
       char pathname[PATH_MAX];
-      
+
       for(ll=0; ll<PATH_MAX; ll++){
 	char ch = getc(stdin);
 	// Translate EOF or newline to terminal null
 	if(ch == EOF || (!Zero_flag && '\n' == ch))
 	  ch = '\0';
-	
+
 	pathname[ll] = ch;
 	if(ch == '\0')
 	  break;
@@ -314,6 +310,7 @@ int main(int argc,char *argv[]){
 
 // Process a path name
 int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf){
+  (void)ftwbuf;
   Total_files++;
 
   /* Ignore null path names */
@@ -392,14 +389,14 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
   Files_checked++;
   Total_bytes += statbuf->st_size;
 
-  // Maintaining an open file descriptor is probably more efficient than invoking multiple system calls with the same path name 
+  // Maintaining an open file descriptor is probably more efficient than invoking multiple system calls with the same path name
   // Note that you can change the external tags of a file open read-only, but you need
   // write permission on the file itself.
   // The O_NOATIME flag is restricted to root or the owner of the file
   int flags = O_RDONLY;
   if(User_id == 0 || User_id == statbuf->st_uid)
     flags |= O_NOATIME;
-  
+
   int const fd = open(pathname,flags);
   if(fd == -1){
     if(errno == EPERM || errno == EACCES)
@@ -417,7 +414,7 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
     } else {
       if(r & SHA256_MISMATCH){
 	SHA256_fails++;
-	printf("SHA256 mismatch: %s\n",pathname);      
+	printf("SHA256 mismatch: %s\n",pathname);
       }
       if(r & MISSING_TAGS)
 	Missing_tag++;
@@ -433,7 +430,7 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
     close(fd);
     return FTW_CONTINUE;
   }
-  long long r = update_tag_fd(fd,statbuf);
+  long long const r = update_tag_fd(fd,statbuf);
   if(Verbose && r > 0)
     printf("Updated %s\n",pathname);
   if(r == -1){
@@ -445,7 +442,7 @@ int process_file(char const *pathname,struct stat const *statbuf,int typeflag,st
   if(Do_oggfiles && is_ogg_file(fd)){
     Ogg_files++;
     // Additionally update sha256ogg header for Ogg (Opus) files
-    r = update_ogg_tag_fd(fd,statbuf);
+    long long const r = update_ogg_tag_fd(fd,statbuf);
     if(Verbose && r > 0)
       printf("Updated ogg %s\n",pathname);
     if(r == -1){
@@ -502,7 +499,7 @@ void print_stats(void){
   if(Regular_files)
     printf("Regular files: %'llu\n",Regular_files);
   if(Ogg_files)
-    printf("Ogg files: %'llu\n",Ogg_files);    
+    printf("Ogg files: %'llu\n",Ogg_files);
 
   if(Null_pathname)
     printf("Null pathnames: %'llu\n",Null_pathname);
@@ -521,9 +518,8 @@ void print_stats(void){
     printf("Bytes hashed: %'llu\n",Bytes_hashed);
 
   if(Check_tags){
-    printf("SHA256 compare failures: %'llu\n",SHA256_fails);  
+    printf("SHA256 compare failures: %'llu\n",SHA256_fails);
   } else {
     printf("Files updated: %'llu\n",Files_hashed);
   }
 }
-

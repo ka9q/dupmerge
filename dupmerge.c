@@ -197,8 +197,8 @@ int compare_inodes(void const *ap,void const *bp); // Version called by qsort()
 int compare_extents(void const *ap,void const *bp);
 
 struct entry *Entries; // Dynamically allocated file table
-int Entryarraysize; // Start with empty table, allocate on first pass
-int Nfiles; // Actual number of entries in Entries[]
+unsigned int Entryarraysize; // Start with empty table, allocate on first pass
+unsigned int Nfiles; // Actual number of entries in Entries[]
 
 void dump_files(void);
 void dump_entry(struct entry const *);
@@ -349,12 +349,12 @@ int main(int argc,char *argv[]){
 
   if(No_do)
     printf("%s: dry run, no files will actually be unlinked\n",Program_name);
-  
+
   /* Sort by file size/device/mod time/nlinks */
   qsort(Entries,Nfiles,sizeof(struct entry),comparison_sort);
   if(Verbose)
     printf("%s: sort done, %'u entries on list\n",Program_name,Nfiles);
-    
+
 #if DEBUG
   dump_files();
 #endif
@@ -365,9 +365,9 @@ int main(int argc,char *argv[]){
   // path names to the first one. This still takes care of the common case where all the entries
   // of a given size refer to a single file
   {
-    int j = 0;
-    for(int i=0;i<Nfiles;i = j){
-      
+    unsigned int j = 0;
+    for(unsigned int i=0;i<Nfiles;i = j){
+
       for(j=i+1; j<Nfiles &&
 	    Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
 	    Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev &&
@@ -380,18 +380,18 @@ int main(int argc,char *argv[]){
       for(;j<Nfiles && Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
 	    Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev;j++)
 	; // empty loop body
-      
+
     }
   }
   if(Extra_links != 0){
     if(Verbose)
       printf("%s: %'llu redundant hard links removed from list\n",Program_name,Extra_links);
-    
+
     qsort(Entries,Nfiles,sizeof(struct entry),comparison_sort);
     Nfiles -= Extra_links;
     if(Verbose)
       printf("%s: list resorted, %'u entries left\n",Program_name,Nfiles);
-    
+
     if(Nfiles < 2){
       FREE(Entries);
       exit(0);
@@ -399,8 +399,8 @@ int main(int argc,char *argv[]){
   }
   // Walk through file list culling out unique sizes
   {
-    int j = 0;
-    for(int i=0;i<Nfiles;i = j){
+    unsigned int j = 0;
+    for(unsigned int i=0;i<Nfiles;i = j){
       // Find first file after this one with a different size or device
       for(j=i+1; j<Nfiles &&
 	    Entries[i].statbuf.st_size == Entries[j].statbuf.st_size &&
@@ -417,21 +417,21 @@ int main(int argc,char *argv[]){
   if(Unique_sizes != 0){
     if(Verbose)
       printf("%s: %'llu files with unique sizes removed from list\n",Program_name,Unique_sizes);
-    
+
     qsort(Entries,Nfiles,sizeof(struct entry),comparison_sort);
     Nfiles -= Unique_sizes;
     if(Verbose)
       printf("%s: list resorted, %'u entries left\n",Program_name,Nfiles);
-    
+
     if(Nfiles < 2){
       FREE(Entries);
       exit(0);
     }
-  }    
+  }
   // Walk through first of each group of files that are candidates for being the same
   // This is the reference file
-  for(int i=0;i<Nfiles-1;i++){
-    
+  for(unsigned int i=0;i<Nfiles-1;i++){
+
     Progress = i;
 
     // Ignore hard links to earlier reference files
@@ -440,13 +440,13 @@ int main(int argc,char *argv[]){
 
     // The qsort grouped together all files with the same size on the same device
     // Scan forward for all files with the same size and device as the reference file
-    for(int j=i+1;
+    for(unsigned int j=i+1;
 	j<Nfiles
 	  && Entries[i].statbuf.st_size == Entries[j].statbuf.st_size
 	  && Entries[i].statbuf.st_dev == Entries[j].statbuf.st_dev;
 	j++){
-      
-      
+
+
       if(Entries[j].pathname == NULL)
 	continue;
 
@@ -468,11 +468,11 @@ int main(int argc,char *argv[]){
 	  // Pathname has single remaining link, so its blocks will be recovered
 	  Blocks_reclaimed += Entries[j].statbuf.st_blocks;
 	}
-	
+
 	{
 	  // Some last minute paranoid checks
 	  struct stat statbuf_a,statbuf_b;
-	  
+
 	  if(lstat(Entries[i].pathname,&statbuf_a)){
 	    printf("%s: can't lstat(%s): %d %s\n",Program_name,Entries[i].pathname,errno,strerror(errno));
 	    abort();
@@ -525,7 +525,7 @@ int main(int argc,char *argv[]){
 // if it's a directory, process it recursively
 // Otherwise, ignore it
 int process(char const *pathname,const struct stat *statbuf,int typeflag,struct FTW *ftwbuf){
-  struct entry *ep;
+  (void)ftwbuf;
   assert(statbuf != NULL);
 
   Total_files++;
@@ -614,7 +614,7 @@ int process(char const *pathname,const struct stat *statbuf,int typeflag,struct 
     assert(Entries != NULL);
     Entryarraysize += ENTRYCHUNK;
   }
-  ep = &Entries[Nfiles];
+  struct entry *ep = &Entries[Nfiles];
   memset(ep,0,sizeof(*ep));
   ep->statbuf = *statbuf;
   ep->pathname = strdup(pathname);
@@ -633,7 +633,7 @@ int process(char const *pathname,const struct stat *statbuf,int typeflag,struct 
 // Returning >0 causes the second argument to sort toward the top of the list
 
 // We want the largest files to go to the top of the list, so "smaller is greater".
-// We also want empty entries to go to the end of the list, so they are always "greater" 
+// We also want empty entries to go to the end of the list, so they are always "greater"
 int comparison_sort(void const *ap,void const *bp){
   struct entry const *a = (struct entry *)ap;
   struct entry const *b = (struct entry *)bp;
@@ -651,7 +651,7 @@ int comparison_sort(void const *ap,void const *bp){
 
   // Each non-cleared entry has a unique path name, and qsort should never compare an entry with itself
   assert(b->pathname != a->pathname);
-  
+
   // Distinguish first by size.
   // By default, bigger files sort first unless overridden with -s option
   if(b->statbuf.st_size != a->statbuf.st_size){
@@ -713,13 +713,13 @@ int comparison_equal(const void *ap,const void *bp){
   // Do this only on files larger than Fast_threshold to further reduce chances of false equality
   if(Fast_flag && a->statbuf.st_size > Fast_threshold){	// Rsync-style fast comparison
     char *bn1,*bn2;
-    
+
     // I could use the built-in basename() function, but what a mess it is
     if((bn1 = strrchr(a->pathname,'/')) == NULL)
       bn1 = a->pathname;
     if((bn2 = strrchr(b->pathname,'/')) == NULL)
       bn2 = b->pathname;
-    
+
     // Are the basenames and mod times identical?
     // Also require that the mod time isn't the epoch (0), which sometimes happens to a lot of files and could cause
     // false equality
@@ -730,7 +730,7 @@ int comparison_equal(const void *ap,const void *bp){
   // compare full file hashes
   get_file_hash(a,&a->statbuf);
   get_file_hash(b,&b->statbuf);
-  
+
   // A hash of all zeroes is a special (and otherwise very unlikely!) value that means
   // "this Ogg file is corrupt". It's not the same as any other hash, so don't deduplicate it and
   // don't recompute it unless out of date
@@ -868,7 +868,7 @@ void dump_entry(struct entry const * const ep){
 
 
 void dump_files(void){
-  for(int i=0;i<Nfiles;i++)
+  for(unsigned int i=0;i<Nfiles;i++)
     dump_entry(&Entries[i]);
 }
 
@@ -878,7 +878,7 @@ void print_stats(void){
       printf("%s: This is a dry run; no files were actually unlinked.\n",Program_name);
     if(Unlinks)
       printf("%s: Unlinks: %'llu; Unlink failures: %'llu; disk blocks reclaimed: %'llu\n",Program_name,Unlinks,Unlink_failures,Blocks_reclaimed);
-    
+
     printf("%s: Hashes computed: %'llu; fetched from tags: %'llu; mismatches: %'llu\n",Program_name,Hashes_computed,Hashes_fetched,Hash_fail);
   }
 }

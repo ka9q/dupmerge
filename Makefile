@@ -74,4 +74,4 @@ clean:
 	rm -f *.o *.a $(APPS)
 
 .c.o:
-	$(CC) $(CFLAGS) -c -o $@ $< 
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $< 
