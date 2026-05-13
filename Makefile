@@ -1,7 +1,6 @@
 .DEFAULT_GOAL := all
 
 BUILD ?= release
-ENABLE_ALL    ?= 1
 prefix        ?= /usr/local
 exec_prefix   ?= $(prefix)
 bindir        ?= $(exec_prefix)/bin
@@ -12,7 +11,10 @@ localstatedir ?= /var
 
 UNAME_S := $(shell uname -s)
 
-CFILES = rmdups.c construct.c mergefiles.c copyfile.c dupmerge.c file_monitor.c library.c ogghash.c
+CFILES = mergefiles.c copyfile.c dupmerge.c file_monitor.c library.c ogghash.c
+
+# file_monitor not supported on MacOS - uses Linux specific fanotify(7) facility
+APPS= dupmerge checkattr mergefiles
 
 CPPFLAGS ?=
 LDFLAGS  ?=
@@ -23,6 +25,7 @@ ifeq ($(UNAME_S),Darwin)
   LDFLAGS  += -L/opt/local/lib
 else
   LDLIBS += -lbsd
+  OBJS += file_monitor
 endif
 
 ifeq ($(BUILD),debug)
@@ -36,33 +39,29 @@ ifdef SANITIZE
      LDOPTS = -fsanitize=address -fsanitize=undefined
 endif
 
-ARCHOPTS = -march=native
-# do NOT set -ffast-math or -ffinite-math-only; NANs are widely used as 'variable not set' sentinels
+ARCHOPTS =
 COPTS = -std=gnu11 -Wall -Wextra -MMD -MP
-COPTS += -fPIC
 CFLAGS += $(DOPTS) $(ARCHOPTS) $(COPTS) $(INCLUDES)
 
 CC=gcc
 
-# file_monitor not supported on MacOS - uses Linux specific fanotify(7) facility
-APPS= dupmerge checkattr mergefiles construct rmdups
 
 all:  $(APPS)
 
 rmdups: rmdups.o
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) -o $@ $^
 
 construct: construct.o library.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 mergefiles: mergefiles.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 checkattr: checkattr.o ogghash.o library.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 dupmerge: dupmerge.o ogghash.o library.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 checkattr.o: checkattr.c filehash.h
 
