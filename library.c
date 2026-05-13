@@ -72,7 +72,7 @@ int getattr256(int const fd,struct attr256 * const attr,char const *attr_name){
 }
 // Temporarily enable write permissions so we can set an attribute
 // May fail if we're not root or don't own the file
-static int temp_enable(int const fd,struct stat const * const statbuf){
+int temp_enable(int const fd,struct stat const * const statbuf){
   // Simulate access() call to see if we'll have to temporarily enable write perms
   // This is hairy logic, I know
   int saved_mode = -1;
@@ -92,7 +92,7 @@ static int temp_enable(int const fd,struct stat const * const statbuf){
 }
 
 // Set sha256 attribute with name 'attr_name'
-static int set_tag_256(int const fd, struct stat const *statbuf, struct attr256 const * const attr,
+int set_tag_256(int const fd, struct stat const *statbuf, struct attr256 const * const attr,
 		       const char *attr_name){
   assert(fd != -1);
 
@@ -131,12 +131,10 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
       return -1;
     statbuf = &sb;
   }
-
   if((statbuf->st_mode & S_IFMT) != S_IFREG)
     return -1; // Not regular file
 
   int64_t count = 0;
-
   {
     // Check status of flat, raw SHA256 tag (user.sha256)
     struct attr256 attr256 = {0};
@@ -159,47 +157,6 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
       attr256.mtime = statbuf->st_mtim;
       set_tag_256(fd,statbuf,&attr256,ATTR_NAME_256); // check return?
     }
-  }
-  return count;
-}
-
-long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
-  assert(fd != -1);
-
-  struct stat sb = {0};
-  if(statbuf == NULL){
-    if(fstat(fd,&sb) == -1)
-      return -1;
-    statbuf = &sb;
-  }
-  if((statbuf->st_mode & S_IFMT) != S_IFREG)
-    return -1; // Not regular file
-
-  int64_t count = 0;
-
-  // OGG-special hash with stream ID and CRCs zeroed (user.sha256ogg)
-  // Check status of SHA256OGG tag
-  struct attr256 attr256ogg = {0};
-  int attr256ogg_state = MISSING;
-  int const r = getattr256(fd,&attr256ogg,ATTR_NAME_256OGG);
-  if(r == 0){
-    if(time_cmp(&attr256ogg.mtime,&statbuf->st_mtim) == 0){
-      attr256ogg_state = CURRENT;
-    } else
-      attr256ogg_state = OLD;
-  }
-  if(attr256ogg_state != CURRENT){
-    count = hash_ogg_file(fd,&attr256ogg.hash);
-#if TRACE
-    printf(" hash_ogg_file returns %lld\n",(long long)count);
-#endif
-    if(count == -1){
-      // Special tag for corrupt files to prevent continual rehashing
-      // and errorneous deduplication
-      memset(&attr256ogg.hash,0,SHA256_DIGEST_LENGTH);
-    }
-    attr256ogg.mtime = statbuf->st_mtim;
-    set_tag_256(fd,statbuf,&attr256ogg,ATTR_NAME_256OGG); // check return?
   }
   return count;
 }
@@ -314,103 +271,6 @@ int64_t hash_file(int const fd,struct stat const *statbuf,void * const sha256has
   EVP_MD_CTX_free(ctx);
   return count;
 }
-// Compute Ogg-special user.sha256ogg hash of entire ogg file already open with file descriptor fd
-// Ogg page headers are read and stream ID and CRC are zeroed before hashing so files
-// written separately will compare the same if their actual contents are the same
-int64_t hash_ogg_file(int const fd,void * const sha256hash){
-  if(fd == -1){
-    errno = EBADF;
-    return -1;
-  }
-  if(sha256hash == NULL){
-    errno = EINVAL;
-    return -1; // Nothing to do!
-  }
-  if (lseek(fd, 0, SEEK_SET) == (off_t)-1){
-    errno = ESPIPE;
-    assert(false);
-    return -1;
-  }
-  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-  assert(ctx != NULL);
-  {
-    int const r = EVP_DigestInit_ex(ctx,EVP_sha256(),NULL);
-    (void)r;
-    assert(r == 1);
-  }
-  int const dfd = dup(fd); // fclose will close this
-  FILE *fp = fdopen(dfd,"rb");
-  if(fp == NULL){
-    int esave = errno;
-    close(dfd);
-    EVP_MD_CTX_free(ctx);
-    errno = esave;
-    return -1;
-  }
-  // Process Ogg pages
-  int64_t byte_count = 0;   // total byte count
-  while(true){
-    // Read page header
-    uint8_t hdr[27];
-
-    int const len = fread(hdr, 1, sizeof hdr, fp);
-    if(len != sizeof hdr)
-      break;
-    if (memcmp(hdr, "OggS", 4) != 0)
-      break;
-    if (hdr[4] != 0)
-      break;
-
-    // Zero stream ID and CRC
-    hdr[14] = hdr[15] = hdr[16] = hdr[17] = 0;
-    hdr[22] = hdr[23] = hdr[24] = hdr[25] = 0;
-    // Hash censored header
-    {
-      int const r = EVP_DigestUpdate(ctx,&hdr,sizeof hdr);
-      (void)r;
-      assert(r == 1);
-    }
-    byte_count += sizeof hdr;
-
-    uint8_t const nseg = hdr[26];
-    if (nseg != 0){
-      uint8_t segtbl[255];
-      if(fread(segtbl, 1, nseg, fp) != nseg)
-	break;
-      {
-	int const r = EVP_DigestUpdate(ctx,segtbl,nseg);
-	(void)r;
-	assert(r == 1);
-      }
-      byte_count += nseg;
-      unsigned int body_len = 0;
-      for (unsigned i = 0; i < nseg; i++)
-	body_len += segtbl[i];
-      if (body_len > 255u * 255u)
-	break;             // impossible, not sure why I'm testing for it
-
-      if (body_len != 0) {
-	uint8_t body[body_len]; // Larger than possible body (255 * 255 = 65025)
-	if (fread(body, 1, body_len, fp) != body_len)
-	  break;
-	{
-	  int const r = EVP_DigestUpdate(ctx,body,body_len);
-	  (void)r;
-	  assert(r == 1);
-	}
-	byte_count += body_len;
-      }
-    }
-  }
-  int const r = EVP_DigestFinal_ex(ctx,sha256hash,NULL);
-  (void)r;
-  assert(r == 1);
-  EVP_MD_CTX_free(ctx);
-  rewind(fp);
-  fclose(fp);
-  return byte_count;
-}
-
 // Convert hex-ascii string of arbitrary length to binary byte string
 // Unknown characters are treated as 0's
 // Caller must ensure space
@@ -430,16 +290,6 @@ int hextobinary(unsigned char * const restrict out,char const * restrict in,int 
     out[i] = bb;
   }
   return 0;
-}
-// Convert integer 0-15 to hex character 0-f
-// Invalid values are converted to space
-static inline char b2h(int const x){
-  if(x >= 0 && x < 10)
-    return '0' + x;
-  else if(x < 16)
-    return 'a' + (x - 10);
-  else
-    return ' ';
 }
 // Convert binary byte string to hex-ascii string, arbitrary length
 // Terminate with null, return pointer to the null
@@ -481,82 +331,4 @@ int sha256_selftest(void){
     return -1;
   }
   return 0;
-}
-static uint32_t u32le(uint8_t const *p){
-    return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
-}
-static inline uint32_t ogg_crc32_update(uint32_t crc, uint8_t const *p, size_t n) {
-  while (n--) {
-    crc ^= (uint32_t)(*p++) << 24;              // feed MSB-first
-    for (int i = 0; i < 8; i++)
-      crc = (crc << 1) ^ (0x04C11DB7U & -(crc >> 31));
-  }
-  return crc;
-}
-
-bool is_ogg_file(int const fd) {
-  if (fd < 0)
-    return false;
-
-  int const dupfd = dup(fd);                 // don’t consume caller’s fd
-  if (dupfd < 0)
-    return false;
-
-  FILE *fp = fdopen(dupfd, "rb");
-  if (!fp){
-    close(dupfd);
-    return false;
-  }
-  bool ok = false;
-  uint8_t hdr[27];
-  if (fread(hdr, 1, sizeof hdr, fp) != sizeof hdr)
-    goto done;
-
-  if (memcmp(hdr, "OggS", 4) != 0)
-    goto done;        // capture
-
-  if (hdr[4] != 0)
-    goto done;                        // version 0 only
-
-  uint8_t const header_type = hdr[5];
-  if (!(header_type & 0x02))
-    goto done;              // BOS must be set
-
-  if (header_type & 0x01)
-    goto done;                 // CONTINUED must be clear
-
-  uint8_t nseg = hdr[26];
-  if (nseg == 0)
-    goto done;                          // first page must carry at least id packet
-
-  uint8_t segtbl[255];
-  if (fread(segtbl, 1, nseg, fp) != nseg)
-    goto done;
-
-  size_t body_len = segtbl[0];
-  for (unsigned i = 1; i < nseg; i++)
-    body_len += segtbl[i];
-  if (body_len > 255u * 255u)
-    goto done;             // impossible for Ogg
-
-  if(body_len > 0){
-    uint8_t body[body_len]; // longer than legal max
-    if(fread(body, 1, body_len, fp) != body_len)
-      goto done;
-
-    // compute CRC over header (with crc field zeroed) + segtbl + body
-    uint8_t hdr_crc[27];
-    memcpy(hdr_crc, hdr, sizeof hdr_crc);
-    memset(&hdr_crc[22], 0, 4);
-
-    uint32_t crc = ogg_crc32_update(0,hdr_crc, 27);
-    crc = ogg_crc32_update(crc,segtbl, nseg);
-    crc = ogg_crc32_update(crc,body, body_len);
-    uint32_t const stored = u32le(&hdr[22]);
-    ok = ((uint32_t)crc == stored);
-  }
- done:
-  if (fp)
-    fclose(fp);                 // also closes dupfd
-  return ok;
 }

@@ -12,9 +12,11 @@ localstatedir ?= /var
 
 UNAME_S := $(shell uname -s)
 
+CFILES = rmdups.c construct.c mergefiles.c copyfile.c dupmerge.c file_monitor.c library.c ogghash.c
+
 CPPFLAGS ?=
 LDFLAGS  ?=
-LDLIBS   ?=
+LDLIBS   ?= -lcrypto -lz
 
 ifeq ($(UNAME_S),Darwin)
   CPPFLAGS += -I/opt/local/include
@@ -43,35 +45,39 @@ CFLAGS += $(DOPTS) $(ARCHOPTS) $(COPTS) $(INCLUDES)
 CC=gcc
 
 # file_monitor not supported on MacOS - uses Linux specific fanotify(7) facility
-#APPS= dupmerge checkattr pathnames mergefiles construct rmdups
-APPS= checkattr dupmerge
+APPS= dupmerge checkattr mergefiles construct rmdups
 
 all:  $(APPS)
 
 rmdups: rmdups.o
-	$(CC) $(CFLAGS) -o rmdups rmdups.o
+	$(CC) $(CFLAGS) -o $@ $^
 
 construct: construct.o library.o
-	$(CC) $(CFLAGS) -o construct construct.o library.o -lcrypto
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 mergefiles: mergefiles.o
-	$(CC) $(CFLAGS) -o mergefiles mergefiles.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-checkattr: checkattr.o library.o
-	$(CC) $(CFLAGS) -o checkattr checkattr.o library.o -lcrypto -lz
+checkattr: checkattr.o ogghash.o library.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-dupmerge: dupmerge.o library.o
-	$(CC) $(CFLAGS) -o dupmerge dupmerge.o library.o -lcrypto -lz
+dupmerge: dupmerge.o ogghash.o library.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 checkattr.o: checkattr.c filehash.h
 
 library.o: library.c filehash.h
 
+ogghash.o: ogghash.c filehash.h
+
 install: $(APPS)
 	install -b -m 0755 -S -v $^ $(DESDIR)$(bindir)
 
 clean:
-	rm -f *.o *.a $(APPS)
+	rm -f *.o *.a *.d $(APPS)
 
 .c.o:
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $< 
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+DEPS = $(CFILES:.c=.d) $(OBJS:.o=.d)
+-include $(DEPS)

@@ -86,6 +86,8 @@ int64_t hash_file(int fd,struct stat const *statbuf,void *sha256hash);
 int64_t hash_ogg_file(int fd,void *sha256hash);
 int getattr256(int fd,struct attr256 *attr,char const *name);
 bool is_ogg_file(int fd);
+int set_tag_256(int const fd, struct stat const *statbuf, struct attr256 const * const attr,
+		const char *attr_name);
 
 // Compare two timespec structures
 static inline int time_cmp(struct timespec const *a,struct timespec const *b){
@@ -98,4 +100,17 @@ static inline int time_cmp(struct timespec const *a,struct timespec const *b){
   if(a->tv_nsec < b->tv_nsec)
     return -1;
   return 0;
+}
+// Convert integer 0-15 to hex character 0-f
+// Invalid values are converted to space
+static inline char b2h(int const x){
+  if(x >= 0 && x < 10)
+    return '0' + x;
+  else if(x < 16)
+    return 'a' + (x - 10);
+  else
+    return ' ';
+}
+static inline uint32_t u32le(uint8_t const *p){
+    return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
 }

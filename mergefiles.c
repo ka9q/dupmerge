@@ -40,7 +40,27 @@ int Dry_run;
 
 
 int do_directory(char *);
-char *filetype(int);
+static char const *Filetypes[] = {
+  "0",
+  "FIFO",
+  "character special",
+  "3",
+  "directory",
+  "5",
+  "block special",
+  "7",
+  "regular file",
+  "o11",
+  "symbolic link",
+  "o13",
+  "socket",
+  "o15",
+  "whiteout",
+  "o17",
+};
+static inline char const *filetype(int x){
+  return Filetypes[(x & S_IFMT) >> 12];
+}
 int files_different(char *,char *,off_t);
 
 long long Files_renamed;
@@ -232,7 +252,7 @@ int do_directory(char *pathname){
     if(pathname != NULL){
       strlcat(target_pathname,pathname,sizeof(target_pathname));
       strlcat(target_pathname,"/",sizeof(target_pathname));
-    }      
+    }
     strlcat(target_pathname,entry->d_name,sizeof(target_pathname));
     // See if target already exists
     if(lstat(target_pathname,&target_statbuf) != 0){
@@ -276,16 +296,15 @@ int do_directory(char *pathname){
       // Files are symbolic links, see if their contents match
       char source_buf[PATH_MAX];
       char target_buf[PATH_MAX];
-      size_t s_len,t_len;
 
-      s_len = readlink(source_pathname,source_buf,sizeof(source_buf));
-      if(s_len == -1){
+      ssize_t s_len = readlink(source_pathname,source_buf,sizeof(source_buf));
+      if(s_len == -1)
 	printf("%s: Can't read symbolic link %s; %s\n",Program_name,source_pathname,strerror(errno));
-      }
-      t_len = readlink(target_pathname,target_buf,sizeof(target_buf));
-      if(t_len == -1){
+
+      ssize_t t_len = readlink(target_pathname,target_buf,sizeof target_buf);
+      if(t_len == -1)
 	printf("%s: Can't read symbolic link %s; %s\n",Program_name,target_pathname,strerror(errno));
-      }
+
       if(s_len == t_len && memcmp(source_buf,target_buf,s_len) == 0){
 	// Identical; unlink source
 	Files_unlinked++;
@@ -344,84 +363,48 @@ int do_directory(char *pathname){
   return 0;
 }
 
-char *Filetypes[] = {
-  "0",
-  "FIFO",
-  "character special",
-  "3",
-  "directory",
-  "5",
-  "block special",
-  "7",
-  "regular file",
-  "o11",
-  "symbolic link",
-  "o13",
-  "socket",
-  "o15",
-  "whiteout",
-  "o17",
-};
-
-char *filetype(int x){
-  return Filetypes[(x & S_IFMT) >> 12];
-}
-
 #define CHUNKSIZE (128*1024*1024)
 
+// returns 0 if files are same, +/-1 if different, -2 on error
 int files_different(char *a,char *b,off_t filesize){
-  int fda,fdb;
-  char *ptr_a,*ptr_b;
-  size_t chunk;
-  off_t a_offset;
-  off_t b_offset;
-  int r = 0;
-
-  if((fda = open(a,O_RDONLY)) == -1){
+  int const fda = open(a,O_RDONLY);
+  if(fda == -1){
     printf("%s: Can't read %s: %s\n",Program_name,a,strerror(errno));
     Errors++;
     return -1;
   }
-  if((fdb = open(b,O_RDONLY)) == -1){
+  int const fdb = open(b,O_RDONLY);
+  if(fdb == -1){
     printf("%s: Can't read %s: %s\n",Program_name,b,strerror(errno));
     Errors++;
     close(fda);
     return -1;
   }
-  a_offset = b_offset = 0;
-  
+  off_t a_offset = 0;
+  off_t b_offset = 0;
+
+  int r = 0;
   while(filesize > 0 && r == 0){
     // Compare 128MB at a time
-    chunk = filesize > CHUNKSIZE ? CHUNKSIZE : filesize;
-    ptr_a = mmap(NULL,chunk,PROT_READ,MAP_FILE|MAP_SHARED|MAP_NOCACHE,fda,a_offset);
+    size_t const chunk = filesize > CHUNKSIZE ? CHUNKSIZE : filesize;
+    void *ptr_a = mmap(NULL, chunk, PROT_READ, MAP_FILE|MAP_SHARED|MAP_NOCACHE, fda, a_offset);
     if(ptr_a == MAP_FAILED){
       printf("%s: mmap failed: %s\n",Program_name,strerror(errno));
       Errors++;
-      r = -1;
+      r = -2;
       break;
     }
-    ptr_b = mmap(NULL,chunk,PROT_READ,MAP_FILE|MAP_SHARED|MAP_NOCACHE,fdb,b_offset);
+    void *ptr_b = mmap(NULL, chunk, PROT_READ, MAP_FILE|MAP_SHARED|MAP_NOCACHE, fdb, b_offset);
     if(ptr_b == MAP_FAILED){
-      printf("%s: mmap failed: %s\n",Program_name,strerror(errno));      
+      printf("%s: mmap failed: %s\n",Program_name,strerror(errno));
       munmap(ptr_a,chunk);
       Errors++;
-      r = -1;
+      r = -2;
       break;
     }
-    if(memcmp(ptr_a,ptr_b,chunk) != 0){
-      // File contents are different
-      r = 1;
-    }
-    if(munmap(ptr_a,chunk) != 0){
-      printf("%s: munmap failed: %s\n",Program_name,strerror(errno));
-      Errors++;
-      r = -1;
-    }
-    if(munmap(ptr_b,chunk) != 0){
-      printf("%s: munmap failed: %s\n",Program_name,strerror(errno));
-      Errors++;
-      r = -1;
-    }
+    r = memcmp(ptr_a,ptr_b,chunk);
+    munmap(ptr_a,chunk);
+    munmap(ptr_b,chunk);
     a_offset += chunk;
     b_offset += chunk;
     filesize -= chunk;
