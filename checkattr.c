@@ -466,6 +466,7 @@ void sig_handler(int sig){
 }
 #else
 void action(int sig,siginfo_t *siginfo, void *p){
+  (void)p;
   if(Verbose)
     printf("%s: Signal %d (%s) caught\n",Program_name,sig,strsignal(sig));
   psiginfo(siginfo,"signal caught");
