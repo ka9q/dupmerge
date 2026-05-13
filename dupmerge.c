@@ -219,7 +219,7 @@ int main(int argc,char *argv[]){
 
   // Process command line args
   int c;
-  while((c = getopt(argc,argv,"snqf0t:L:vm:o")) != EOF){
+  while((c = getopt(argc,argv,"snqf0t:L:vm:o")) != -1){
     switch(c){
     case 'o':
       Oggfiles = true;
@@ -293,7 +293,7 @@ int main(int argc,char *argv[]){
 
       int i;
       for(i=0;i< PATH_MAX;i++){
-	char const ch = getc(stdin);
+	int const ch = getc(stdin);
 	if(EOF == ch || '\0' == ch || (!Zero_flag && '\n' == ch))
 	  break;
 	pathname[i] = ch;

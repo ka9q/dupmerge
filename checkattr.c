@@ -263,7 +263,7 @@ int main(int argc,char *argv[]){
       char pathname[PATH_MAX];
 
       for(ll=0; ll<PATH_MAX; ll++){
-	char ch = getc(stdin);
+	int ch = getc(stdin);
 	// Translate EOF or newline to terminal null
 	if(ch == EOF || (!Zero_flag && '\n' == ch))
 	  ch = '\0';
@@ -275,7 +275,7 @@ int main(int argc,char *argv[]){
       if(ll == PATH_MAX){
 	// Input line was too long; flush until terminating null/newline/EOF
 	printf("Input line > PATH_MAX (%d); flushing\n",PATH_MAX);
-	char ch;
+	int ch;
 	do {
 	  ch = getc(stdin);
 	  // Translate EOF or newline to terminating null
