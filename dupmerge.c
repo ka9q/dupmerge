@@ -197,8 +197,8 @@ int compare_inodes(void const *ap,void const *bp); // Version called by qsort()
 int compare_extents(void const *ap,void const *bp);
 
 struct entry *Entries; // Dynamically allocated file table
-unsigned int Entryarraysize; // Start with empty table, allocate on first pass
-unsigned int Nfiles; // Actual number of entries in Entries[]
+int Entryarraysize; // Start with empty table, allocate on first pass
+int Nfiles; // Actual number of entries in Entries[]
 
 void dump_files(void);
 void dump_entry(struct entry const *);
