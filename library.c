@@ -155,7 +155,8 @@ long long update_tag_fd(int fd,struct stat const *statbuf){
       printf(" hash_file returns %lld\n",(long long)count);
 #endif
       attr256.mtime = statbuf->st_mtim;
-      set_tag_256(fd,statbuf,&attr256,ATTR_NAME_256); // check return?
+      if(set_tag_256(fd,statbuf,&attr256,ATTR_NAME_256) == -1)
+	return -1;
     }
   }
   return count;

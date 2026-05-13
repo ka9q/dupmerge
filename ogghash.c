@@ -35,6 +35,8 @@
 
 #include "filehash.h"
 
+// Return number of bytes hashed, or -1 on error
+// Covers payload only, will be smaller than total file size
 long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
   assert(fd != -1);
 
@@ -63,7 +65,6 @@ long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
 #if TRACE
     printf("oggsha256: %s\n",attr256ogg_state == CURRENT ? "current" : attr256ogg_state == OLD ? "old" : "missing");
 #endif
-
   if(attr256ogg_state != CURRENT){
     count = hash_ogg_file(fd,&attr256ogg.hash);
 #if TRACE
@@ -75,7 +76,8 @@ long long update_ogg_tag_fd(int fd,struct stat const *statbuf){
       memset(&attr256ogg.hash,0,SHA256_DIGEST_LENGTH);
     }
     attr256ogg.mtime = statbuf->st_mtim;
-    set_tag_256(fd,statbuf,&attr256ogg,ATTR_NAME_256OGG); // check return?
+    if(set_tag_256(fd,statbuf,&attr256ogg,ATTR_NAME_256OGG) == -1)
+      return -1;
   }
   return count;
 }
@@ -168,15 +170,15 @@ int64_t hash_ogg_file(int const fd,void * const sha256hash){
       break;
     }
   }
-  done:;
-    if (stream_initialized)
-      ogg_stream_clear(&os);
-    ogg_sync_clear(&oy);
-    EVP_DigestFinal_ex(ctx,sha256hash,NULL);
-    EVP_MD_CTX_free(ctx);
-    fclose(fp);
-    return byte_count;
-  }
+ done:;
+  if (stream_initialized)
+    ogg_stream_clear(&os);
+  ogg_sync_clear(&oy);
+  EVP_DigestFinal_ex(ctx,sha256hash,NULL);
+  EVP_MD_CTX_free(ctx);
+  fclose(fp);
+  return byte_count;
+}
 
 static inline uint32_t ogg_crc32_update(uint32_t crc, uint8_t const *p, size_t n) {
   while (n--) {
