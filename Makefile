@@ -25,7 +25,7 @@ ifeq ($(UNAME_S),Darwin)
   LDFLAGS  += -L/opt/local/lib
 else
   LDLIBS += -lbsd
-  OBJS += file_monitor
+  APPS += file_monitor
 endif
 
 ifeq ($(BUILD),debug)
