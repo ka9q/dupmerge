@@ -1,7 +1,9 @@
+.DS_Store
 *~
 *.o
 *.a
 *.d
+#*
 checkattr
 dupmerge
 file_monitor
