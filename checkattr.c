@@ -116,7 +116,7 @@ void print_stats(void);
 int process_file(char const *pathname,struct stat const *statbuf,int typeflag,struct FTW *ftwbuf);
 
 int main(int argc,char *argv[]){
-  char const *locale_string = getenv("$LANG");
+  char const *locale_string = getenv("LANG");
 
   Program_name = argv[0];
   User_id = geteuid();
