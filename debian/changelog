@@ -1,5 +1,5 @@
-dupmerge (1.0-1) UNRELEASED; urgency=medium
+dupmerge (1.0-2trixie1) trixie; urgency=medium
 
-  * Initial release. (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+  * Initial release. 
 
- -- Phil Karn <karn@ka9q.net>  Tue, 12 May 2026 17:02:01 -0700
+ -- Phil Karn <karn@ka9q.net>  Thu, 28 May 2026 18:57:58 -0700
