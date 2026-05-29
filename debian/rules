@@ -15,13 +15,13 @@
 #export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
 
 
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp
+
 override_dh_auto_build:
 	@echo "MAKEFLAGS=$(MAKEFLAGS)"
 	@echo "DEB_BUILD_OPTIONS=$(DEB_BUILD_OPTIONS)"
 	$(MAKE) -j$(shell nproc) $(PLUGIN_FLAGS) prefix=/usr systemdunitdir=/usr/lib/systemd/system
-
-override_dh_auto_install:
-	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp prefix=/usr
 
 %:
 	dh $@
