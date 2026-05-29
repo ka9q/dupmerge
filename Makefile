@@ -78,7 +78,7 @@ library.o: library.c filehash.h
 ogghash.o: ogghash.c filehash.h
 
 install: $(APPS)
-	install -b -m 0755 -S -v $^ $(DESDIR)$(bindir)
+	install -b -m 0755 -S -v $^ $(DESTDIR)$(bindir)
 
 clean:
 	rm -f *.o *.a *.d $(APPS)
