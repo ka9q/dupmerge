@@ -851,7 +851,7 @@ void dump_entry(struct entry const * const ep){
 	  ep->statbuf.st_ctimespec.tv_sec,ep->statbuf.st_ctimespec.tv_nsec,
 	  (unsigned long long)ep->statbuf.st_size,ep->statbuf.st_gen,ep->pathname);
 #elif(__linux__)
-  printf(" inode %'llu; links %u; uid %d; gid %d; atime %ld.%09ld; mtime %ld.%09ld; ctime %ld.%09ld; size %'llu; %s\n",
+  printf(" inode %'llu; links %u; uid %d; gid %d; atime %lld.%09ld; mtime %lld.%09ld; ctime %lld.%09ld; size %'llu; %s\n",
 	 (long long unsigned)ep->statbuf.st_ino,
 	 (unsigned int)ep->statbuf.st_nlink,ep->statbuf.st_uid,ep->statbuf.st_gid,
 	 ep->statbuf.st_atim.tv_sec,ep->statbuf.st_atim.tv_nsec,
