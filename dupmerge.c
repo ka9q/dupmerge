@@ -843,30 +843,30 @@ int get_file_hash(struct entry *ep,struct stat const *statbuf){
 void dump_entry(struct entry const * const ep){
 
 #if (__darwin__)
-  printf(" inode %'llu; links %u; uid %d; gid %d; atime %ld.%09ld; mtime %ld.%09ld; ctime %ld.%09ld; size %'llu; gen %d; %s\n",
-	  ep->statbuf.st_ino,
-	  (unsigned int)ep->statbuf.st_nlink,ep->statbuf.st_uid,ep->statbuf.st_gid,
-	  ep->statbuf.st_atimespec.tv_sec,ep->statbuf.st_atimespec.tv_nsec,
-	  ep->statbuf.st_mtimespec.tv_sec,ep->statbuf.st_mtimespec.tv_nsec,
-	  ep->statbuf.st_ctimespec.tv_sec,ep->statbuf.st_ctimespec.tv_nsec,
-	  (unsigned long long)ep->statbuf.st_size,ep->statbuf.st_gen,ep->pathname);
+  printf(" inode %'llu; links %u; uid %d; gid %d; atime %lld.%09ld; mtime %lld.%09ld; ctime %lld.%09ld; size %'llu; gen %d; %s\n",
+	 ep->statbuf.st_ino,
+	 (unsigned int)ep->statbuf.st_nlink,ep->statbuf.st_uid,ep->statbuf.st_gid,
+	 (long long)ep->statbuf.st_atimespec.tv_sec,ep->statbuf.st_atimespec.tv_nsec,
+	 (long long)ep->statbuf.st_mtimespec.tv_sec,ep->statbuf.st_mtimespec.tv_nsec,
+	 (long long)ep->statbuf.st_ctimespec.tv_sec,ep->statbuf.st_ctimespec.tv_nsec,
+	 (unsigned long long)ep->statbuf.st_size,ep->statbuf.st_gen,ep->pathname);
 #elif(__linux__)
-  printf(" inode %'llu; links %u; uid %d; gid %d; atime %ld.%09ld; mtime %ld.%09ld; ctime %ld.%09ld; size %'llu; %s\n",
+  printf(" inode %'llu; links %u; uid %d; gid %d; atime %lld.%09ld; mtime %lld.%09ld; ctime %lld.%09ld; size %'llu; %s\n",
 	 (long long unsigned)ep->statbuf.st_ino,
 	 (unsigned int)ep->statbuf.st_nlink,ep->statbuf.st_uid,ep->statbuf.st_gid,
-	 ep->statbuf.st_atim.tv_sec,ep->statbuf.st_atim.tv_nsec,
-	 ep->statbuf.st_mtim.tv_sec,ep->statbuf.st_mtim.tv_nsec,
-	 ep->statbuf.st_ctim.tv_sec,ep->statbuf.st_ctim.tv_nsec,
+	 (long long)ep->statbuf.st_atim.tv_sec,ep->statbuf.st_atim.tv_nsec,
+	 (long long)ep->statbuf.st_mtim.tv_sec,ep->statbuf.st_mtim.tv_nsec,
+	 (long long)ep->statbuf.st_ctim.tv_sec,ep->statbuf.st_ctim.tv_nsec,
 	 (unsigned long long)ep->statbuf.st_size,ep->pathname);
 #else
-  printf(" inode %'llu; links %u; uid %d; gid %d; atime %ld; mtime %ld; ctime %ld; size %'llu; %s\n",
-	  (unsigned long long) ep->statbuf.st_ino,
-	  (unsigned int)ep->statbuf.st_nlink,ep->statbuf.st_uid,ep->statbuf.st_gid,
-	  ep->statbuf.st_atime,
-	  ep->statbuf.st_mtime,
-	  ep->statbuf.st_ctime,
-	  (unsigned long long)ep->statbuf.st_size,
-	  ep->pathname);
+  printf(" inode %'llu; links %u; uid %d; gid %d; atime %lld; mtime %lld; ctime %lld; size %'llu; %s\n",
+	 (unsigned long long) ep->statbuf.st_ino,
+	 (unsigned int)ep->statbuf.st_nlink,ep->statbuf.st_uid,ep->statbuf.st_gid,
+	 (long long)ep->statbuf.st_atime,
+	 (long long)ep->statbuf.st_mtime,
+	 (long long)ep->statbuf.st_ctime,
+	 (unsigned long long)ep->statbuf.st_size,
+	 ep->pathname);
 #endif
 }
 
