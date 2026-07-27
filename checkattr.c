@@ -153,7 +153,7 @@ int main(int argc,char *argv[]){
       Zero_flag = true; /* Path names are delimited by nulls, e.g., from 'find . -print0' */
       break;
     default:
-      printf("Usage: %s [-v] [-0] [-q] [-c] [-x] [-L locale]",Program_name);
+      printf("Usage: %s [-v] [-0] [-o] [-q] [-c] [-x] [-L locale]\n",Program_name);
       break;
     }
   }

@@ -1,5 +1,12 @@
-dupmerge (1.0-2trixie1) trixie; urgency=medium
+dupmerge (2026.07.27-1-trixie1) trixie; urgency=medium
 
-  * Initial release. 
+  * switch to date-based versioning
+  * update and fix usage message
+
+ -- Phil Karn <karn@ka9q.net>  Mon, 27 Jul 2026 02:02:35 -0700
+
+dupmerge (1.0-2-trixie1) trixie; urgency=medium
+
+  * Initial release.
 
  -- Phil Karn <karn@ka9q.net>  Thu, 28 May 2026 18:57:58 -0700
